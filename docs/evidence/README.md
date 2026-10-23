@@ -12,3 +12,4 @@ project ID is masked by GitHub as `***`).
 | [Scenario 3: editing an applied migration is blocked](pr3-blocked.md) | ❌ blocked | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39885488994) |
 | [Scenario 4: broken source data is blocked](dq-gate.md) | ❌ blocked | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39885807472) |
 | [Production deployment (after manual approval)](deploy-prod.md) | ✅ passed | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39883046028) |
+| [Scenario 5: a manual change in BigQuery is detected](scenario5-manual-change.md) | ❌ detected, ✅ after restore | [effect run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39940900977) |

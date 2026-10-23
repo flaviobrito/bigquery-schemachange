@@ -98,7 +98,7 @@ docs/                      bqchange reference, runbook and data quality catalogu
 | `V1.2.0__add_customer_marketing_consent.sql` | versioned  | Schema evolution (`ALTER TABLE ... ADD COLUMN`)   |
 | `V1.3.0__create_load_log.sql`                | versioned  | Operational table in AUDIT                        |
 | `R__shared_routines.sql`                     | repeatable | Persistent UDF used by dbt models and tests       |
-| `R__audit_views.sql`                         | repeatable | Views over change history and load log            |
+| `R__audit_views.sql`                         | repeatable | Views over change history, load log and schema history |
 | `A__dataset_options.sql`                     | always     | Converging labels; 7-day table expiration on PR datasets |
 | `A__grants.sql`                              | always     | Dataset-level `GRANT` for a reader principal      |
 
@@ -122,9 +122,13 @@ Checks run in layers. See [docs/data-quality.md](docs/data-quality.md) for the f
    (`dbt_utils`, `dbt_expectations` and custom generic tests).
 3. **Singular tests**: revenue reconciliation, payment consistency, schema drift.
 4. **Unit tests** for business logic (`fct_orders` totals, customer segmentation).
-5. **Contracts** on every GOLD model: column names, types and precision, not null.
-6. **Schema drift audit**: `INFORMATION_SCHEMA.COLUMNS` versus dbt source
-   declarations, with history in `audit_schema_snapshots` and Slack/Teams alerts.
+5. **Contracts** on every SILVER and GOLD model: column names, types and precision.
+6. **Schema drift audit on BRONZE, SILVER and GOLD**: `INFORMATION_SCHEMA.COLUMNS`
+   versus dbt sources and model contracts, with history in `audit_schema_snapshots`
+   and Slack/Teams alerts. Manual changes in BigQuery are reported before dbt overwrites them.
+7. **Schema history for every layer**: `bqchange record-schema` logs each added,
+   removed or retyped column of BRONZE, SILVER and GOLD with its source
+   (migration, dbt or manual), commit and pull request (`<env>_audit.schema_history`).
 
 Failing rows of every test are stored in `<env>_audit`.
 
@@ -148,7 +152,7 @@ flowchart LR
 | ---------------- | ----------------------- | ------------------------------------------------------------------- |
 | `ci.yml`         | pull request            | Offline checks; then migrations and slim `dbt build` in pull request datasets |
 | `deploy.yml`     | push to `main`, manual  | DEV, then PROD behind the `production` environment approval; dbt docs artifact |
-| `monitor.yml`    | manual                  | Source freshness, schema drift alert and the full data test suite on PROD |
+| `monitor.yml`    | manual (`dev` or `prod`) | Source freshness, schema drift alert (all layers) and the full data test suite |
 | `pr-cleanup.yml` | pull request closed     | Drops the pull request datasets                                      |
 | `dq-gate-demo.yml` | manual               | Loads deliberately broken data into a throwaway environment; the quality gate is expected to fail |
 
@@ -168,6 +172,7 @@ repository's pull requests and workflow runs:
 | Logic bug: order total ignores shipping                    | `fct_orders` unit test and `order_total` expression test |
 | Edit of an already applied versioned migration             | bqchange immutability check                            |
 | Broken source data (invalid values, orphans, negative prices) | SILVER data tests (`dq-gate-demo.yml`)              |
+| Manual `ALTER TABLE` on a SILVER/GOLD table in BigQuery    | Schema drift audit on all layers (`monitor.yml`)      |
 
 ## Getting started
 

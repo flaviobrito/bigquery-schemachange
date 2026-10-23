@@ -1,14 +1,47 @@
 version: 2
 
-models:
-  - name: int_orders__items_aggregated
-    description: Line items rolled up to order grain, including product cost.
-    columns:
-      - name: order_id
-        data_tests: [unique, not_null]
+# SILVER models enforce contracts too: every column and type is declared, so a
+# change made in code fails the build, and a change made directly in BigQuery
+# is reported by the schema drift audit (models/audit).
 
-  - name: int_orders__payments_aggregated
-    description: Payment transactions rolled up to order grain.
-    columns:
-      - name: order_id
-        data_tests: [unique, not_null]
+models:
+- name: int_orders__items_aggregated
+  description: Line items rolled up to order grain, including product cost.
+  config:
+    contract:
+      enforced: true
+  columns:
+  - name: order_id
+    data_type: string
+    data_tests:
+    - unique
+    - not_null
+  - name: item_count
+    data_type: int64
+  - name: unit_count
+    data_type: int64
+  - name: items_amount
+    data_type: numeric(18, 2)
+  - name: items_cost
+    data_type: numeric(18, 2)
+- name: int_orders__payments_aggregated
+  description: Payment transactions rolled up to order grain.
+  config:
+    contract:
+      enforced: true
+  columns:
+  - name: order_id
+    data_type: string
+    data_tests:
+    - unique
+    - not_null
+  - name: payment_attempt_count
+    data_type: int64
+  - name: approved_amount
+    data_type: numeric(18, 2)
+  - name: refunded_amount
+    data_type: numeric(18, 2)
+  - name: last_payment_method
+    data_type: string
+  - name: last_approved_at
+    data_type: timestamp

@@ -41,6 +41,9 @@ def clone_environment(source: str, target: str, bq: bigquery.Client | None = Non
     _require_pull_request(target)
     bq = bq or client()
 
+    # Start from a clean copy: tables left by a previous run of the same pull
+    # request would otherwise be compared with DEV's state.
+    drop_environment(target, bq)
     for layer in LAYERS:
         dataset = bigquery.Dataset(dataset_id(bq.project, target, layer))
         dataset.location = bq.location

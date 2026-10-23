@@ -85,11 +85,19 @@ jobs:
       - name: Clone DEV into pull request datasets
         run: uv run python -m ops.manage_environment clone --source dev --target "$BQ_ENV"
 
+      # Compared with DEV's last snapshot. Only modified models are built here,
+      # so tables absent from this environment are not reported as removed.
+      - name: Record out-of-band schema changes
+        run: uv run bqchange record-schema --source manual --ignore-missing-tables
+
       - name: bqchange plan
         run: uv run bqchange deploy --dry-run
 
       - name: bqchange deploy
         run: uv run bqchange deploy
+
+      - name: Record schema changes made by migrations
+        run: uv run bqchange record-schema --source migration --ignore-missing-tables
 
       - name: Fetch DEV manifest for slim CI
         id: state
@@ -117,6 +125,9 @@ jobs:
           else
             uv run dbt build
           fi
+
+      - name: Record schema changes made by dbt
+        run: uv run bqchange record-schema --source dbt --ignore-missing-tables
 
       - name: Schema and data quality report
         if: always()

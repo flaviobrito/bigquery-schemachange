@@ -38,8 +38,10 @@ migrate-plan: ## bqchange dry run against $BQ_ENV
 	uv run bqchange deploy --dry-run
 
 .PHONY: migrate
-migrate: ## Apply pending migrations to $BQ_ENV
+migrate: ## Apply pending migrations to $BQ_ENV and record schema changes
+	uv run bqchange record-schema --source manual
 	uv run bqchange deploy
+	uv run bqchange record-schema --source migration
 
 .PHONY: sample-data
 sample-data: ## Generate and load synthetic data into BRONZE
@@ -47,8 +49,9 @@ sample-data: ## Generate and load synthetic data into BRONZE
 	uv run python -m ops.load_sample_data --input-dir data/sample
 
 .PHONY: build
-build: ## dbt build (models, data tests, unit tests)
+build: ## dbt build (models, data tests, unit tests) and record schema changes
 	$(DBT) build $(DBT_ARGS)
+	uv run bqchange record-schema --source dbt
 
 .PHONY: freshness
 freshness: ## dbt source freshness

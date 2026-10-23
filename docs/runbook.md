@@ -70,17 +70,35 @@ models are deferred to DEV. Tables in these datasets expire after 7 days, and
 
 ## 6. Schema drift
 
-`monitor.yml` refreshes `<env>_audit.audit_schema_snapshots` and
-`<env>_audit.audit_schema_drift`, posts non-aligned columns to
-`SCHEMA_ALERT_WEBHOOK_URL` and fails the run.
+`monitor.yml` (choose `dev` or `prod`) refreshes `<env>_audit.audit_schema_snapshots`
+and `<env>_audit.audit_schema_drift` for BRONZE, SILVER and GOLD, posts non-aligned
+columns to `SCHEMA_ALERT_WEBHOOK_URL` and fails the run **before** `dbt build`, so a
+manual change is reported instead of being silently overwritten. To resolve drift
+in SILVER/GOLD, either revert the manual change by rebuilding the model
+(`dbt build --select <model>`) or make it official in code (model + contract) via a
+pull request.
 
 | Status                | Meaning                                       | Fix                                     |
 | --------------------- | --------------------------------------------- | --------------------------------------- |
-| `undeclared_in_dbt`   | Column exists in BigQuery but not in sources  | Declare it, or revert the manual change with a migration |
+| `undeclared_in_dbt`   | Column exists in BigQuery but not in dbt (sources for BRONZE, contracts for SILVER/GOLD) | Declare it in code, or revert the manual change |
 | `missing_in_database` | Declared in sources but not in BigQuery       | Add the migration, or remove the declaration |
 | `type_mismatch`       | Types differ                                  | Align the declaration or migrate the column |
 
-## 7. Cost controls
+## 7. Schema history
+
+Every structural change of BRONZE, SILVER and GOLD is logged with its source:
+
+```sql
+select changed_at, layer, table_name, column_name, change_type,
+       old_data_type, new_data_type, source, pull_request, run_url
+from `<project>.prod_audit.schema_history`
+order by changed_at desc;
+```
+
+`source = 'manual'` means the change was made outside the pipeline; follow up
+with the schema drift section above.
+
+## 8. Cost controls
 
 - `maximum_bytes_billed` of 1 GiB per job in bqchange and dbt.
 - BRONZE tables are partitioned by load date and clustered by key.

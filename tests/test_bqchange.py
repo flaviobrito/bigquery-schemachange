@@ -20,10 +20,18 @@ class FakeExecutor:
         self.recorded: list[dict] = []
         self.datasets: list[str] = []
         self.upgrades: list[dict] = []
+        self.backfills: list[dict] = []
 
     def execute(self, sql, params=None):
         if params and "new" in params:
             self.upgrades.append(params)
+        elif (
+            params
+            and "script_source" in params
+            and "checksum" in params
+            and "version" not in params
+        ):
+            self.backfills.append(params)
         elif params and "checksum" in params:
             self.recorded.append(params)
         else:
@@ -268,3 +276,66 @@ def test_dry_run_never_upgrades_checksums(project):
     executor = FakeExecutor(applied)
     deploy(load_config(project / "bqchange.yml"), executor, dry_run=True)
     assert executor.upgrades == []
+
+
+def _applied_with_source(project, name, source_text, rendered_checksum="old"):
+    from bqchange.render import checksum as digest
+
+    return AppliedScript(name, "R", None, rendered_checksum, digest(source_text), source_text)
+
+
+def test_repeatable_rerendered_for_another_environment_is_labelled_as_such(project):
+    config = load_config(project / "bqchange.yml")
+    source = (project / "scripts" / "repeatable" / "R__views.sql").read_text().strip()
+    applied = applied_from(project, "V1.0.0__first.sql", "V1.2.0__second.sql", "V1.10.0__tenth.sql")
+    applied.append(_applied_with_source(project, "R__views.sql", source))
+    pending = plan(
+        discover(config.root_folder),
+        applied,
+        Renderer.from_config(config),
+        {"project": config.project, "location": config.location, **config.vars},
+    ).pending
+    views = next(p for p in pending if p.script.name == "R__views.sql")
+    assert views.reason == "re-rendered for dev (file unchanged)"
+    assert views.diff is None
+
+
+def test_edited_repeatable_shows_a_diff_in_the_summary(project, tmp_path, monkeypatch):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    applied = applied_from(project, "V1.0.0__first.sql", "V1.2.0__second.sql", "V1.10.0__tenth.sql")
+    applied.append(
+        _applied_with_source(project, "R__views.sql", "create or replace view v as select 0")
+    )
+    executor = FakeExecutor(applied)
+    deploy(load_config(project / "bqchange.yml"), executor)
+
+    content = summary.read_text()
+    assert "| `repeatable/R__views.sql` | repeatable | file changed |" in content
+    assert "-create or replace view v as select 0" in content
+    assert "+create or replace view v as select 1" in content
+    recorded = next(r for r in executor.recorded if r["script"] == "R__views.sql")
+    assert recorded["script_source"] == "create or replace view v as select 1"
+
+
+def test_unchanged_scripts_recorded_without_source_are_backfilled_once(project):
+    applied = applied_from(
+        project, "V1.0.0__first.sql", "V1.2.0__second.sql", "V1.10.0__tenth.sql", "R__views.sql"
+    )
+    executor = FakeExecutor(applied)
+    deploy(load_config(project / "bqchange.yml"), executor)
+    assert sorted(b["script"] for b in executor.backfills) == [
+        "R__views.sql",
+        "V1.0.0__first.sql",
+        "V1.10.0__tenth.sql",
+        "V1.2.0__second.sql",
+    ]
+
+
+def test_new_scripts_show_their_content_in_the_summary(project, tmp_path, monkeypatch):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    deploy(load_config(project / "bqchange.yml"), FakeExecutor())
+    content = summary.read_text()
+    assert "View changes in <code>versioned/V1.0.0__first.sql</code>" in content
+    assert "+create schema `{{ env }}_a`" in content

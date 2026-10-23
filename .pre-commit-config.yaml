@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        args: [--unsafe]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: check-merge-conflict
+
+  # Blocks commits containing credentials (service account keys, tokens, webhooks).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: sqlfluff-lint
+        name: sqlfluff lint
+        entry: uv run sqlfluff lint
+        language: system
+        files: ^dbt/(models|tests)/.*\.sql$
+        exclude: ^dbt/tests/generic/
+      - id: uv-lock
+        name: uv lock check
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false

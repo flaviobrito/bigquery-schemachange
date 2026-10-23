@@ -1,0 +1,11 @@
+version: 2
+
+data_tests:
+  - name: assert_no_bronze_schema_drift
+    description: BRONZE physical columns match dbt source declarations.
+  - name: assert_payments_do_not_exceed_order_total
+    description: Net paid amount never exceeds the order total.
+  - name: assert_revenue_reconciles_with_orders
+    description: agg_daily_revenue sums to the revenue in fct_orders.
+  - name: assert_delivered_orders_are_paid
+    description: Every delivered order has an approved payment.

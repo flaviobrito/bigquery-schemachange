@@ -1,0 +1,41 @@
+name: Set up toolchain
+description: >
+  Install uv, Python dependencies and dbt packages; optionally authenticate to
+  Google Cloud with Workload Identity Federation (short-lived OIDC credentials,
+  no service account key). The calling job needs `permissions: id-token: write`.
+
+inputs:
+  workload-identity-provider:
+    description: Full resource name of the Workload Identity Provider (leave empty to skip auth).
+    required: false
+    default: ""
+  service-account:
+    description: Service account impersonated through Workload Identity Federation.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      with:
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+
+    - name: Install Python dependencies
+      shell: bash
+      run: uv sync --frozen
+
+    - name: Install dbt packages
+      shell: bash
+      run: uv run dbt deps --project-dir dbt --profiles-dir dbt
+
+    - name: Authenticate to Google Cloud
+      if: inputs.workload-identity-provider != ''
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.workload-identity-provider }}
+        service_account: ${{ inputs.service-account }}
+        create_credentials_file: true
+        export_environment_variables: true

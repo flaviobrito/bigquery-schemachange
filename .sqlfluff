@@ -1,0 +1,45 @@
+[sqlfluff]
+dialect = bigquery
+# Jinja templater with dbt builtins: lints offline, no warehouse connection needed.
+templater = jinja
+max_line_length = 100
+exclude_rules = ST06, AM04, RF04
+large_file_skip_byte_limit = 40000
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+load_macros_from_path = dbt/macros
+library_path = .sqlfluff_libs
+
+[sqlfluff:templater:jinja:context]
+target = {"project": "offline-project", "schema": "ci_silver", "name": "ci"}
+
+[sqlfluff:indentation]
+tab_space_size = 4
+indented_joins = False
+implicit_indents = allow
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:aliasing.table]
+aliasing = explicit
+
+[sqlfluff:rules:aliasing.column]
+aliasing = explicit
+
+[sqlfluff:rules:convention.terminator]
+multiline_newline = False
+
+[sqlfluff:templater:jinja:macros]
+# dbt env_var() and the project's udf()/layer_dataset() helpers, resolved offline.
+env_var = {% macro env_var(name, default='') %}ci{% endmacro %}

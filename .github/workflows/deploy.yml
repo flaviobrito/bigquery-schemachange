@@ -1,0 +1,136 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**", ".github/dependabot.yml"]
+  workflow_dispatch:
+    inputs:
+      load_sample_data:
+        description: Generate and load synthetic data into BRONZE before building
+        type: boolean
+        default: false
+      full_refresh:
+        description: Rebuild incremental models from scratch
+        type: boolean
+        default: false
+
+# Never cancel a deployment halfway through a migration.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+  BQ_READER_PRINCIPAL: ${{ vars.BQ_READER_PRINCIPAL }}
+  DBT_PROFILES_DIR: dbt
+  DBT_PROJECT_DIR: dbt
+  FULL_REFRESH_FLAG: ${{ inputs.full_refresh && '--full-refresh' || '' }}
+
+jobs:
+  dev:
+    name: Deploy DEV
+    if: vars.GCP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: dev
+    env:
+      BQ_ENV: dev
+      DBT_TARGET: dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-gcp
+        with:
+          workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: bqchange deploy
+        run: uv run bqchange deploy
+
+      - name: Load sample data
+        if: inputs.load_sample_data
+        run: |
+          uv run python -m ops.generate_sample_data --output-dir data/sample
+          uv run python -m ops.load_sample_data --input-dir data/sample
+
+      - name: dbt build
+        run: uv run dbt build $FULL_REFRESH_FLAG
+
+      - name: Schema and data quality report
+        if: always()
+        run: uv run python -m ops.report
+
+      - name: Upload manifest (state for slim CI)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dbt-manifest-dev
+          path: dbt/target/manifest.json
+          retention-days: 30
+
+  prod:
+    name: Deploy PROD
+    needs: dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The "production" environment requires a manual approval.
+    environment: production
+    env:
+      BQ_ENV: prod
+      DBT_TARGET: prod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-gcp
+        with:
+          workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: bqchange plan
+        run: uv run bqchange deploy --dry-run
+
+      - name: bqchange deploy
+        run: uv run bqchange deploy
+
+      - name: Load sample data
+        if: inputs.load_sample_data
+        run: |
+          uv run python -m ops.generate_sample_data --output-dir data/sample
+          uv run python -m ops.load_sample_data --input-dir data/sample
+
+      # Unit tests already ran in CI and DEV; production runs models and data tests.
+      - name: dbt build
+        run: uv run dbt build --exclude-resource-type unit_test $FULL_REFRESH_FLAG
+
+      - name: Schema and data quality report
+        if: always()
+        run: uv run python -m ops.report
+
+      - name: dbt docs
+        run: |
+          uv run dbt docs generate --static
+          mkdir -p site
+          cp dbt/target/static_index.html site/index.html
+
+      - name: Upload docs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dbt-docs
+          path: site
+          retention-days: 30
+
+      - name: Upload dbt artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dbt-artifacts-prod
+          path: |
+            dbt/target/run_results.json
+            dbt/target/manifest.json
+          retention-days: 30
+          if-no-files-found: ignore

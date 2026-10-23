@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  DBT_PROFILES_DIR: dbt
+  DBT_PROJECT_DIR: dbt
+  BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+
+jobs:
+  static-checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Placeholders: parsing and rendering never call BigQuery.
+      GCP_PROJECT_ID: offline-project
+      BQ_ENV: dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-gcp
+
+      - name: Ruff
+        run: |
+          uv run ruff check --output-format=github .
+          uv run ruff format --check .
+
+      - name: Python unit tests
+        run: uv run pytest
+
+      - name: sqlfluff
+        run: uv run sqlfluff lint dbt/models dbt/tests --format github-annotation-native
+
+      - name: dbt parse
+        run: |
+          uv run dbt parse --warn-error-options '{"error": ["Deprecations"]}'
+
+      - name: Render migrations
+        run: |
+          set -euo pipefail
+          cd migrations/scripts
+          for script in $(find . -name '*.sql' | sed 's|^\./||' | sort); do
+            echo "::group::$script"
+            (cd ../.. && uv run bqchange render "$script")
+            echo "::endgroup::"
+          done
+
+  integration:
+    name: Deploy and test in pull request datasets
+    needs: static-checks
+    # Skipped for forks and until Google Cloud is configured (GCP_ENABLED=true).
+    if: vars.GCP_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ci
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      BQ_ENV: pr_${{ github.event.pull_request.number }}
+      DBT_TARGET: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-gcp
+        with:
+          workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # Table clones carry DEV's BRONZE data, audit history and change history,
+      # so only the migrations introduced by this pull request are applied.
+      - name: Clone DEV into pull request datasets
+        run: uv run python -m ops.manage_environment clone --source dev --target "$BQ_ENV"
+
+      - name: bqchange plan
+        run: uv run bqchange deploy --dry-run
+
+      - name: bqchange deploy
+        run: uv run bqchange deploy
+
+      - name: Fetch DEV manifest for slim CI
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml --branch main \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$run_id" ] && gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name dbt-manifest-dev --dir dbt/state; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No DEV manifest found, running a full build."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Unmodified models are deferred to DEV; modified models, their children
+      # and the schema audit are built in the pull request datasets.
+      - name: dbt build
+        run: |
+          if [ "${{ steps.state.outputs.available }}" = "true" ]; then
+            uv run dbt build --select state:modified+ tag:schema_audit --defer --state dbt/state
+          else
+            uv run dbt build
+          fi
+
+      - name: Schema and data quality report
+        if: always()
+        run: uv run python -m ops.report
+
+      - name: Upload dbt artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dbt-artifacts-pr-${{ github.event.pull_request.number }}
+          path: |
+            dbt/target/run_results.json
+            dbt/target/manifest.json
+          retention-days: 7
+          if-no-files-found: ignore

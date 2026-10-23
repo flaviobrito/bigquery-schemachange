@@ -1,0 +1,279 @@
+version: 2
+
+# GOLD models enforce contracts: column names and types are checked before the
+# table is built, so a breaking change fails in CI instead of in a dashboard.
+
+models:
+  - name: fct_orders
+    description: One row per order with amounts, margin and payment reconciliation.
+    config:
+      contract: {enforced: true}
+    constraints:
+      - type: primary_key
+        columns: [order_id]
+        warn_unenforced: false
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "order_total = items_amount - discount_amount + shipping_amount"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "discount_amount <= items_amount"
+          config:
+            severity: warn
+      - dbt_utils.recency:
+          arguments:
+            datepart: day
+            field: ordered_at
+            interval: 3
+          config:
+            severity: warn
+            tags: ["freshness"]
+    columns:
+      - name: order_id
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: customer_id
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        data_type: date
+        constraints: [{type: not_null}]
+      - name: ordered_at
+        data_type: timestamp
+      - name: order_status
+        data_type: string
+      - name: order_channel
+        data_type: string
+      - name: currency_code
+        data_type: string
+      - name: item_count
+        data_type: int64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+              config:
+                severity: warn
+      - name: unit_count
+        data_type: int64
+      - name: items_amount
+        data_type: numeric(18, 2)
+      - name: discount_amount
+        data_type: numeric(18, 2)
+      - name: shipping_amount
+        data_type: numeric(18, 2)
+      - name: order_total
+        data_type: numeric(18, 2)
+        description: items_amount - discount_amount + shipping_amount.
+        data_tests:
+          - non_negative
+      - name: gross_margin
+        data_type: numeric(18, 2)
+        description: Items revenue after discount minus product cost.
+      - name: approved_payment_amount
+        data_type: numeric(18, 2)
+      - name: refunded_payment_amount
+        data_type: numeric(18, 2)
+      - name: net_paid_amount
+        data_type: numeric(18, 2)
+      - name: payment_method
+        data_type: string
+      - name: paid_at
+        data_type: timestamp
+      - name: is_revenue
+        data_type: bool
+        description: True for statuses listed in var('revenue_order_statuses').
+        data_tests: [not_null]
+
+  - name: fct_order_items
+    description: One row per order line with cost and margin.
+    config:
+      contract: {enforced: true}
+    constraints:
+      - type: primary_key
+        columns: [order_item_id]
+        warn_unenforced: false
+    columns:
+      - name: order_item_id
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: order_id
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: product_id
+        data_type: string
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: customer_id
+        data_type: string
+      - name: order_date
+        data_type: date
+      - name: order_status
+        data_type: string
+      - name: product_category
+        data_type: string
+      - name: quantity
+        data_type: int64
+      - name: unit_price
+        data_type: numeric(18, 2)
+      - name: line_amount
+        data_type: numeric(18, 2)
+      - name: line_cost
+        data_type: numeric(18, 2)
+      - name: line_margin
+        data_type: numeric(18, 2)
+
+  - name: dim_customers
+    description: One row per customer with lifetime value and segment.
+    config:
+      contract: {enforced: true}
+    constraints:
+      - type: primary_key
+        columns: [customer_id]
+        warn_unenforced: false
+    columns:
+      - name: customer_id
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: full_name
+        data_type: string
+      - name: email
+        data_type: string
+      - name: is_email_valid
+        data_type: bool
+      - name: country_code
+        data_type: string
+      - name: state
+        data_type: string
+      - name: city
+        data_type: string
+      - name: has_marketing_opt_in
+        data_type: bool
+      - name: customer_since
+        data_type: timestamp
+      - name: first_order_at
+        data_type: timestamp
+      - name: last_order_at
+        data_type: timestamp
+      - name: lifetime_order_count
+        data_type: int64
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: lifetime_revenue
+        data_type: numeric(18, 2)
+        data_tests: [non_negative]
+      - name: customer_segment
+        data_type: string
+        description: prospect (no revenue orders) | new | returning (2+ orders) | vip (2000+).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [prospect, new, returning, vip]
+
+  - name: dim_products
+    description: One row per product with list margin.
+    config:
+      contract: {enforced: true}
+    constraints:
+      - type: primary_key
+        columns: [product_id]
+        warn_unenforced: false
+    columns:
+      - name: product_id
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: sku
+        data_type: string
+      - name: product_name
+        data_type: string
+      - name: category
+        data_type: string
+      - name: brand
+        data_type: string
+      - name: unit_price
+        data_type: numeric(18, 2)
+      - name: unit_cost
+        data_type: numeric(18, 2)
+      - name: unit_margin
+        data_type: numeric(18, 2)
+      - name: unit_margin_pct
+        data_type: numeric(18, 4)
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -1
+                max_value: 1
+      - name: is_active
+        data_type: bool
+
+unit_tests:
+  - name: test_fct_orders_totals_and_revenue_flag
+    description: order_total, gross margin and is_revenue follow the business rules.
+    model: fct_orders
+    given:
+      - input: ref('stg_ecommerce__orders')
+        rows:
+          - {order_id: "O1", customer_id: "C1", order_status: "delivered", order_channel: "web",
+             currency_code: "BRL", shipping_amount: 10, discount_amount: 5,
+             ordered_at: "2026-01-10 10:00:00", order_date: "2026-01-10"}
+          - {order_id: "O2", customer_id: "C1", order_status: "cancelled", order_channel: "web",
+             currency_code: "BRL", shipping_amount: 0, discount_amount: 0,
+             ordered_at: "2026-01-11 10:00:00", order_date: "2026-01-11"}
+      - input: ref('int_orders__items_aggregated')
+        rows:
+          - {order_id: "O1", item_count: 2, unit_count: 3, items_amount: 100, items_cost: 60}
+          - {order_id: "O2", item_count: 1, unit_count: 1, items_amount: 50, items_cost: 30}
+      - input: ref('int_orders__payments_aggregated')
+        rows:
+          - {order_id: "O1", approved_amount: 105, refunded_amount: 0}
+    expect:
+      rows:
+        - {order_id: "O1", order_total: 105, gross_margin: 35, net_paid_amount: 105,
+           is_revenue: true}
+        - {order_id: "O2", order_total: 50, gross_margin: 20, net_paid_amount: 0,
+           is_revenue: false}
+
+  - name: test_dim_customers_segmentation
+    description: Customers are segmented by revenue orders and lifetime value.
+    model: dim_customers
+    given:
+      - input: ref('stg_ecommerce__customers')
+        rows:
+          - {customer_id: "C1"}
+          - {customer_id: "C2"}
+          - {customer_id: "C3"}
+          - {customer_id: "C4"}
+      - input: ref('fct_orders')
+        rows:
+          - {customer_id: "C2", order_total: 100, is_revenue: true}
+          - {customer_id: "C3", order_total: 100, is_revenue: true}
+          - {customer_id: "C3", order_total: 150, is_revenue: true}
+          - {customer_id: "C4", order_total: 2500, is_revenue: true}
+          - {customer_id: "C1", order_total: 999, is_revenue: false}
+    expect:
+      rows:
+        - {customer_id: "C1", customer_segment: "prospect", lifetime_order_count: 0}
+        - {customer_id: "C2", customer_segment: "new", lifetime_order_count: 1}
+        - {customer_id: "C3", customer_segment: "returning", lifetime_order_count: 2}
+        - {customer_id: "C4", customer_segment: "vip", lifetime_order_count: 1}

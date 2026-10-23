@@ -1,0 +1,30 @@
+name: PR cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  drop-datasets:
+    name: Drop pull request datasets
+    if: vars.GCP_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ci
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-gcp
+        with:
+          workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Drop pr_${{ github.event.pull_request.number }}_* datasets
+        run: uv run python -m ops.manage_environment drop --target "pr_${{ github.event.pull_request.number }}"

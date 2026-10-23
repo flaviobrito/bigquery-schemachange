@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: int_orders__items_aggregated
+    description: Line items rolled up to order grain, including product cost.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+
+  - name: int_orders__payments_aggregated
+    description: Payment transactions rolled up to order grain.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]

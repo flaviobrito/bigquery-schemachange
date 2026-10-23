@@ -1,0 +1,36 @@
+# Local notes kept out of version control
+arquitetura_monitoramento_schema.md
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Credentials: never commit. CI uses Workload Identity Federation (no keys)
+# and local runs use gcloud Application Default Credentials (~/.config/gcloud).
+.env
+*.json.key
+*-key.json
+*credentials*.json
+service-account*.json
+application_default_credentials.json
+*.p12
+*.pem
+keys/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+logs/
+
+# Generated sample data and documentation captures in progress
+data/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

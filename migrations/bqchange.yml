@@ -1,0 +1,21 @@
+# bqchange configuration. Rendered with Jinja: env_var('NAME', 'default').
+#
+# No credentials here: authentication uses Application Default Credentials
+# (gcloud locally, Workload Identity Federation in GitHub Actions).
+# BQ_ENV selects the environment: dev, prod or pr_<number>. Every environment
+# lives in the same project as a set of datasets prefixed with its name.
+project: "{{ env_var('GCP_PROJECT_ID') }}"
+location: "{{ env_var('BQ_LOCATION', 'US') }}"
+root-folder: scripts
+modules-folder: modules
+change-history-table: "{{ env_var('BQ_ENV') }}_meta.change_history"
+create-change-history-table: true
+# Cost guardrail: any single migration job billing more than 1 GiB fails.
+maximum-bytes-billed: 1073741824
+labels:
+  environment: "{{ env_var('BQ_ENV') }}"
+  application: ecommerce
+vars:
+  env: "{{ env_var('BQ_ENV') }}"
+  # Optional IAM principal granted read access to GOLD, e.g. group:analysts@example.com
+  reader_principal: "{{ env_var('BQ_READER_PRINCIPAL', '') }}"

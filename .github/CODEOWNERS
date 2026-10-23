@@ -1,0 +1,8 @@
+# Default reviewers for every change.
+*                         @flaviobrito
+
+# Database migrations and CI/CD need an explicit review.
+/migrations/              @flaviobrito
+/src/bqchange/            @flaviobrito
+/bootstrap/               @flaviobrito
+/.github/                 @flaviobrito

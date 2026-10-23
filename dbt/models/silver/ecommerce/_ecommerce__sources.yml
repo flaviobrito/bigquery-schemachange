@@ -1,0 +1,200 @@
+version: 2
+
+# BRONZE tables are created and evolved by bqchange migrations
+# (migrations/scripts/versioned). Every physical column must be declared here:
+# the schema drift audit (models/audit) flags anything that diverges.
+# Source tests use severity "warn": raw data is reported, cleaned in SILVER,
+# and blocking checks live on SILVER/GOLD models.
+
+sources:
+  - name: ecommerce
+    description: Raw storefront exports landed by ops/load_sample_data.py.
+    database: "{{ target.project }}"
+    schema: "{{ env_var('BQ_ENV') }}_bronze"
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 72, period: hour}
+    tables:
+      - name: customers
+        description: Storefront customer accounts. One row per account version exported.
+        data_tests:
+          - dbt_expectations.expect_table_row_count_to_be_between:
+              arguments:
+                min_value: 1
+              config:
+                severity: warn
+        columns:
+          - name: customer_id
+            data_type: string
+            description: Natural key from the storefront.
+            data_tests:
+              - not_null
+              - unique:
+                  config:
+                    severity: warn
+          - name: first_name
+            data_type: string
+          - name: last_name
+            data_type: string
+          - name: email
+            data_type: string
+            data_tests:
+              - is_valid_email:
+                  config:
+                    severity: warn
+          - name: phone
+            data_type: string
+          - name: country_code
+            data_type: string
+            description: ISO 3166-1 alpha-2 country code.
+          - name: state
+            data_type: string
+          - name: city
+            data_type: string
+          - name: created_at
+            data_type: timestamp
+          - name: updated_at
+            data_type: timestamp
+          - name: marketing_opt_in
+            data_type: bool
+            description: Added in migration V1.2.0.
+          - &source_file
+            name: _source_file
+            data_type: string
+            description: File the row was loaded from.
+          - &source_row_number
+            name: _source_row_number
+            data_type: int64
+            description: Row number inside the source file.
+          - &loaded_at
+            name: _loaded_at
+            data_type: timestamp
+            description: Load timestamp, used for source freshness.
+
+      - name: products
+        description: Product catalog.
+        columns:
+          - name: product_id
+            data_type: string
+            data_tests:
+              - not_null
+              - unique:
+                  config:
+                    severity: warn
+          - name: sku
+            data_type: string
+          - name: product_name
+            data_type: string
+          - name: category
+            data_type: string
+          - name: brand
+            data_type: string
+          - name: unit_price
+            data_type: numeric
+            data_tests:
+              - non_negative:
+                  config:
+                    severity: warn
+          - name: unit_cost
+            data_type: numeric
+          - name: is_active
+            data_type: bool
+          - name: created_at
+            data_type: timestamp
+          - name: updated_at
+            data_type: timestamp
+          - *source_file
+          - *source_row_number
+          - *loaded_at
+
+      - name: orders
+        description: Order headers.
+        columns:
+          - name: order_id
+            data_type: string
+            data_tests:
+              - not_null
+              - unique:
+                  config:
+                    severity: warn
+          - name: customer_id
+            data_type: string
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: source('ecommerce', 'customers')
+                    field: customer_id
+                  config:
+                    severity: warn
+          - name: order_status
+            data_type: string
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [placed, paid, shipped, delivered, cancelled, returned]
+                  config:
+                    severity: warn
+          - name: order_channel
+            data_type: string
+          - name: currency_code
+            data_type: string
+          - name: shipping_amount
+            data_type: numeric
+          - name: discount_amount
+            data_type: numeric
+          - name: ordered_at
+            data_type: timestamp
+          - name: updated_at
+            data_type: timestamp
+          - *source_file
+          - *source_row_number
+          - *loaded_at
+
+      - name: order_items
+        description: Order line items.
+        columns:
+          - name: order_item_id
+            data_type: string
+            data_tests:
+              - not_null
+              - unique:
+                  config:
+                    severity: warn
+          - name: order_id
+            data_type: string
+          - name: product_id
+            data_type: string
+          - name: quantity
+            data_type: int64
+          - name: unit_price
+            data_type: numeric
+            description: Price charged at order time.
+          - *source_file
+          - *source_row_number
+          - *loaded_at
+
+      - name: payments
+        description: Payment transactions.
+        columns:
+          - name: payment_id
+            data_type: string
+            data_tests:
+              - not_null
+              - unique:
+                  config:
+                    severity: warn
+          - name: order_id
+            data_type: string
+          - name: payment_method
+            data_type: string
+          - name: payment_status
+            data_type: string
+          - name: amount
+            data_type: numeric
+          - name: paid_at
+            data_type: timestamp
+          - *source_file
+          - *source_row_number
+          - *loaded_at

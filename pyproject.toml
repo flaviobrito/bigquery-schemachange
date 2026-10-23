@@ -1,0 +1,44 @@
+[project]
+name = "bigquery-schemachange"
+version = "1.0.0"
+description = "BigQuery e-commerce lakehouse: schemachange-style migrations (bqchange) and dbt medallion models."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "dbt-bigquery==1.12.1",
+    "dbt-core==1.12.6",
+    "google-cloud-bigquery>=3.30,<4",
+    "jinja2>=3.1,<4",
+    "pyyaml>=6,<7",
+]
+
+[project.scripts]
+bqchange = "bqchange.cli:main"
+
+[dependency-groups]
+dev = [
+    "faker==40.43.0",
+    "pre-commit==4.7.0",
+    "pytest==9.1.1",
+    "ruff==0.17.2",
+    "sqlfluff==4.4.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bqchange"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["dbt/dbt_packages", "dbt/target", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

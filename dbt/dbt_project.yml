@@ -1,0 +1,47 @@
+name: ecommerce
+version: "1.0.0"
+config-version: 2
+profile: ecommerce
+require-dbt-version: [">=1.10.0", "<2.0.0"]
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+clean-targets: ["target", "dbt_packages", "logs"]
+
+flags:
+  require_explicit_package_overrides_for_builtin_materializations: true
+  send_anonymous_usage_stats: false
+
+vars:
+  # Order statuses that count as revenue in GOLD.
+  revenue_order_statuses: ["paid", "shipped", "delivered"]
+
+models:
+  ecommerce:
+    +persist_docs:
+      relation: true
+      columns: true
+    +labels:
+      application: ecommerce
+    silver:
+      +schema: silver
+      +materialized: view
+      intermediate:
+        # Views (not ephemeral) so they can be inputs of dbt unit tests.
+        +materialized: view
+    gold:
+      +schema: gold
+      +materialized: table
+    audit:
+      +schema: audit
+      +tags: ["schema_audit"]
+
+data_tests:
+  ecommerce:
+    # Failing rows are kept in <env>_audit for investigation (one table per test).
+    +store_failures: true
+    +schema: audit

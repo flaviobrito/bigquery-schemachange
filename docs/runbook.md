@@ -70,13 +70,17 @@ models are deferred to DEV. Tables in these datasets expire after 7 days, and
 
 ## 6. Schema drift
 
-`monitor.yml` refreshes `<env>_audit.audit_schema_snapshots` and
-`<env>_audit.audit_schema_drift`, posts non-aligned columns to
-`SCHEMA_ALERT_WEBHOOK_URL` and fails the run.
+`monitor.yml` (choose `dev` or `prod`) refreshes `<env>_audit.audit_schema_snapshots`
+and `<env>_audit.audit_schema_drift` for BRONZE, SILVER and GOLD, posts non-aligned
+columns to `SCHEMA_ALERT_WEBHOOK_URL` and fails the run **before** `dbt build`, so a
+manual change is reported instead of being silently overwritten. To resolve drift
+in SILVER/GOLD, either revert the manual change by rebuilding the model
+(`dbt build --select <model>`) or make it official in code (model + contract) via a
+pull request.
 
 | Status                | Meaning                                       | Fix                                     |
 | --------------------- | --------------------------------------------- | --------------------------------------- |
-| `undeclared_in_dbt`   | Column exists in BigQuery but not in sources  | Declare it, or revert the manual change with a migration |
+| `undeclared_in_dbt`   | Column exists in BigQuery but not in dbt (sources for BRONZE, contracts for SILVER/GOLD) | Declare it in code, or revert the manual change |
 | `missing_in_database` | Declared in sources but not in BigQuery       | Add the migration, or remove the declaration |
 | `type_mismatch`       | Types differ                                  | Align the declaration or migrate the column |
 

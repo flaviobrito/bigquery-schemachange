@@ -6,9 +6,9 @@ possible, while raw data is never silently discarded.
 | Layer  | Mechanism                         | Severity | Where                                      |
 | ------ | --------------------------------- | -------- | ------------------------------------------ |
 | BRONZE | dbt source tests and freshness    | warn     | `_ecommerce__sources.yml`                  |
-| SILVER | dbt data tests                    | error*   | `_ecommerce__models.yml`                   |
+| SILVER | Contracts and dbt data tests      | error*   | `_ecommerce__models.yml`, `_intermediate__models.yml` |
 | GOLD   | Contracts, data and unit tests    | error*   | `_core__models.yml`, `_finance__models.yml` |
-| AUDIT  | Schema drift                      | error    | `audit_schema_drift`, `assert_no_bronze_schema_drift` |
+| AUDIT  | Schema drift, all layers          | error    | `audit_schema_drift`, `assert_no_bronze_schema_drift`, `assert_no_model_schema_drift` |
 
 \* A few business heuristics are `warn` (see below). Failing rows of every test
 are stored in the `<env>_audit` dataset, one table per test.
@@ -29,7 +29,7 @@ by `stg_ecommerce__customers.is_email_valid` and the `is_valid_email` generic te
 | Validity               | `accepted_values`, `dbt_utils.accepted_range`, `expect_column_values_to_match_regex`, custom `is_valid_email`, `non_negative` |
 | Business rules         | `order_total = items - discount + shipping`, `unit_cost <= unit_price`, delivered orders are paid, payments do not exceed totals, revenue reconciles between `fct_orders` and `agg_daily_revenue` |
 | Logic (unit tests)     | `fct_orders` totals and revenue flag; `dim_customers` segmentation        |
-| Structure              | Enforced contracts (types and numeric precision) on all GOLD models; schema drift between BRONZE and sources |
+| Structure              | Enforced contracts (types and numeric precision) on all SILVER and GOLD models; schema drift between BigQuery and dbt in BRONZE, SILVER and GOLD |
 
 ## Warn vs error
 

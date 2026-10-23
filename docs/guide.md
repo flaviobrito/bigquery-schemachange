@@ -14,11 +14,13 @@ step. Every step lists what you do (**input**) and what you should see
 3. [How the pieces fit together](#3-how-the-pieces-fit-together)
 4. [One-time setup](#4-one-time-setup)
 5. [The pipelines, one by one](#5-the-pipelines-one-by-one)
-6. [The quality gate in action: four blocked changes](#6-the-quality-gate-in-action-four-blocked-changes)
-7. [Reading the run reports](#7-reading-the-run-reports)
-8. [Day-to-day workflow](#8-day-to-day-workflow)
-9. [Troubleshooting](#9-troubleshooting)
-10. [Glossary](#10-glossary)
+6. [The quality gate in action: five blocked changes](#6-the-quality-gate-in-action-five-blocked-changes)
+7. [A pull request from opening to closing](#7-a-pull-request-from-opening-to-closing)
+8. [Change log: monitoring every layer](#8-change-log-monitoring-every-layer)
+9. [Reading the run reports](#9-reading-the-run-reports)
+10. [Day-to-day workflow](#10-day-to-day-workflow)
+11. [Troubleshooting](#11-troubleshooting)
+12. [Glossary](#12-glossary)
 
 ---
 
@@ -142,7 +144,7 @@ with different owners:
 | Can it be rebuilt from scratch? | **No**: dropping it loses data that exists nowhere else | **Yes**: dbt drops and rebuilds it on every run |
 | How its structure changes | an incremental `alter table`, in a new migration | by editing the model's `select` |
 | In dbt it is a | `source` (declared in YAML, **read only**) | `model` (**built** by dbt) |
-| Change tracking | change history table + schema drift audit | Git history + contracts (GOLD) + tests |
+| Change tracking | change history table + schema drift audit | Git history + contracts + tests + schema drift audit |
 
 So migrations only manage what dbt must never rebuild. Managing model tables
 with migrations as well would give them two owners, and dbt would overwrite
@@ -398,10 +400,10 @@ environment ([run](https://github.com/flaviobrito/bigquery-schemachange/actions/
 
 | | |
 | --- | --- |
-| **Trigger** | Manual (**Actions → Data quality monitor → Run workflow**). In a real production setup it would run on a daily schedule |
-| **Input** | `prod_*` datasets |
+| **Trigger** | Manual (**Actions → Data quality monitor → Run workflow**, choose `prod` or `dev`). In a real production setup it would run on a daily schedule |
+| **Input** | `prod_*` or `dev_*` datasets |
 | **Steps** | Source freshness → refresh schema audit → report → schema drift alert (Slack/Teams if configured) → full test suite |
-| **Expected outcome** | ✅ when data is fresh, the schema matches and all tests pass; ❌ with a drift alert when someone changed BRONZE outside the pipeline |
+| **Expected outcome** | ✅ when data is fresh, the schema matches and all tests pass; ❌ with a drift alert when someone changed any layer outside the pipeline. On drift it stops **before** `dbt build`, so the evidence is not overwritten |
 
 ### 5.4 Data quality gate demo (`dq-gate-demo.yml`)
 
@@ -411,7 +413,7 @@ environment ([run](https://github.com/flaviobrito/bigquery-schemachange/actions/
 | **Input** | A throwaway environment cloned from DEV, plus deliberately broken data |
 | **Expected outcome** | ❌ always: it exists to show the gate stopping bad data (see scenario 4). The throwaway environment is dropped at the end |
 
-## 6. The quality gate in action: four blocked changes
+## 6. The quality gate in action: five blocked changes
 
 A quality gate is only credible if you can watch it say **no**. Each scenario
 below was run for real in this repository. Full details, including the raw log
@@ -423,8 +425,17 @@ lines, are in [docs/evidence](evidence/README.md).
 | 2 | Revenue formula forgets shipping | Unit test | [PR #2](https://github.com/flaviobrito/bigquery-schemachange/pull/2): ❌ |
 | 3 | Editing an applied migration | bqchange immutability rule | [PR #3](https://github.com/flaviobrito/bigquery-schemachange/pull/3): ❌ |
 | 4 | Broken data arrives | SILVER data tests | [Run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39885807472): ❌ |
+| 5 | Manual `ALTER TABLE` on a GOLD table in BigQuery | Schema drift audit (all layers) | [Run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39940900977): ❌ then ✅ after restore |
 
 ### Scenario 1: a new column nobody declared
+
+| | |
+| --- | --- |
+| **Before** | `customers` in BRONZE has 14 columns, all declared in the dbt sources; drift audit aligned. |
+| **What was done** | A migration `V1.4.0` adds `loyalty_tier`, without declaring it in dbt. |
+| **After** | CI applies `V1.4.0` only in the pull request datasets, reports the column as `undeclared_in_dbt` and blocks the PR. After declaring the column, CI is green. |
+| **Objective** | Every source column must be known to dbt, so documentation, tests and lineage never lag behind the database. |
+| **Effect** | Undocumented structure can no longer reach DEV or PROD; the fix is a one-line YAML change shown in the report. |
 
 **Story.** The store starts exporting a loyalty tier. A developer adds the
 migration but forgets to tell dbt about the new column.
@@ -453,6 +464,14 @@ itself: `V1.4.0` in the change history and `loyalty_tier` as the newest BRONZE c
 
 ### Scenario 2: a wrong business rule
 
+| | |
+| --- | --- |
+| **Before** | `order_total = items - discount + shipping`, covered by a unit test and an expression test. |
+| **What was done** | The formula is edited to drop shipping. |
+| **After** | The unit test fails before any table is built; 24 dependent nodes are skipped; the PR is blocked. |
+| **Objective** | Business rules are encoded as tests, not tribal knowledge. |
+| **Effect** | A revenue bug is caught in review, with the exact expected vs actual rows, instead of on a dashboard. |
+
 **Story.** Someone decides shipping should not count in the order total and
 edits `dbt/models/gold/core/fct_orders.sql`.
 
@@ -478,6 +497,14 @@ built, and the 24 models and tests that depend on `fct_orders` are skipped.
 
 ### Scenario 3: rewriting history
 
+| | |
+| --- | --- |
+| **Before** | `V1.1.0` is applied in DEV and PROD; its checksum is stored in `change_history`. |
+| **What was done** | The applied file is edited in place. |
+| **After** | bqchange refuses to plan: "Versioned scripts are immutable: add a new version instead". Nothing is applied. |
+| **Objective** | Git and every database must describe the same history. |
+| **Effect** | Silent divergence between environments is impossible; the developer is told the correct procedure. |
+
 **Story.** A developer adds a column description directly inside
 `V1.1.0__create_bronze_tables.sql`, a migration that DEV and PROD already ran.
 
@@ -494,6 +521,14 @@ right way: a new version.
 > every environment reproducible.
 
 ### Scenario 4: bad data arrives
+
+| | |
+| --- | --- |
+| **Before** | DEV holds clean sample data; all checks pass. |
+| **What was done** | Broken rows are loaded into a throwaway copy of DEV. |
+| **After** | BRONZE warns (raw data is kept), SILVER fails with 3 errors, GOLD is skipped, the copy is dropped. |
+| **Objective** | Bad source data must never reach business tables, but must not be lost either. |
+| **Effect** | Analysts keep seeing the last good numbers; engineers get the failing rows stored in AUDIT. |
 
 **Story.** The store's export contains problems: invalid emails, an order for a
 customer who does not exist, a negative price and an unknown order status.
@@ -513,7 +548,128 @@ loaded into a throwaway copy of DEV by `dq-gate-demo.yml`.
 
 ![Scenario 4 report: 8 warnings in BRONZE, 3 failures in SILVER, 29 nodes skipped](images/report-dq-gate.png)
 
-## 7. Reading the run reports
+### Scenario 5: someone changes a table by hand
+
+| | |
+| --- | --- |
+| **Before** | The schema drift audit covered BRONZE only. A manual `ALTER TABLE` on a SILVER or GOLD table went unnoticed and was silently overwritten by the next `dbt build` (or kept forever on the incremental model). |
+| **What was done** | With the monitoring of every layer in place (see [section 8](#8-change-log-monitoring-every-layer)), a column is added by hand: `alter table dev_gold.dim_customers add column manual_note string`. |
+| **After** | The monitor reports `GOLD dim_customers.manual_note ❌ undeclared_in_dbt`, sends the alert and stops before `dbt build`. After `dbt build` recreates the table from code, the monitor is green again. |
+| **Objective** | Every change to the data platform must go through Git; changes made elsewhere must be visible, not silently erased. |
+| **Effect** | Out-of-band changes are detected within one monitor run, with the exact table, column and layer. |
+
+**Input:** in the BigQuery console (or `bq`), on the DEV environment:
+
+```sql
+alter table `<project>.dev_gold.dim_customers`
+add column manual_note string options (description = 'Added by hand in the BigQuery console');
+```
+
+**Expected outcome:** monitor before the change ✅, after the change ❌ with the
+column named, after `dbt build` ✅.
+
+**Actual outcome:** before [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39935547618) ✅ ·
+effect [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39940900977) ❌ · after [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39941074529) ✅.
+
+![Scenario 5: before aligned, effect detected in GOLD, after aligned](images/report-scenario5-manual-change.png)
+
+## 7. A pull request from opening to closing
+
+A pull request (PR) is where a change is proposed, tested and decided. This is
+the full life of one, using the real PRs of this repository.
+
+```mermaid
+flowchart LR
+    A[Create a branch<br/>and commit] --> B[Open the PR]
+    B --> C[CI runs automatically]
+    C -->|red| D[Read the report,<br/>push a fix]
+    D --> C
+    C -->|green| E{Decision}
+    E -->|merge| F[Deploy: DEV, then PROD<br/>after approval]
+    E -->|close without merging| G[PR closed]
+    F --> H[pr-cleanup drops<br/>pr_n datasets]
+    G --> H
+```
+
+### 7.1 Open the pull request
+
+| | |
+| --- | --- |
+| **You do** | Push a branch and open a PR to `main` (button *Compare & pull request* on GitHub, or `gh pr create`) |
+| **What happens** | `ci.yml` starts: static checks, then the integration job in `pr_<n>` datasets |
+| **Where to look** | The PR's *Conversation* tab: every commit shows ✅ or ❌, and the *Checks* tab lists each job |
+
+![Timeline of PR #1: first commit blocked by schema drift, later commit green](images/pr1-timeline.png)
+
+*PR #1: each commit and CI run is recorded in the timeline. Red crosses are
+blocked attempts; the last commit, which declared the column, is green.*
+
+### 7.2 Fix and push again
+
+| | |
+| --- | --- |
+| **You do** | Read the run report (see [section 9](#9-reading-the-run-reports)), fix the cause, push a new commit to the same branch |
+| **What happens** | CI runs again on the new commit; the PR shows the new result |
+
+### 7.3 Merge, or close without merging
+
+- **Merge** (green button *Merge pull request*) when CI is green and the change is wanted. The merge starts the deployment to DEV and asks for production approval.
+- **Close** when the change should not go in. Demonstration PRs #2 and #3 were closed this way.
+
+The **Close pull request** button is at the very bottom of the *Conversation*
+tab, under the comment box, to the left of *Comment*. It is only visible to
+signed-in users with write access to the repository:
+
+![The Close pull request button under the comment box](images/pr-close-button.jpg)
+
+*Optionally write a comment first (for example, why it was closed), then click
+**Close pull request**.*
+
+![PR #2 after being closed](images/pr2-closed.png)
+
+*The PR is marked **Closed**, the closing event and comment are kept in the
+timeline, and the branch stays available for reference.*
+
+### 7.4 Automatic clean-up
+
+| | |
+| --- | --- |
+| **Trigger** | A PR is closed (merged or not) |
+| **Workflow** | `pr-cleanup.yml` |
+| **Effect** | The `pr_<n>_bronze`, `_silver`, `_gold`, `_audit` and `_meta` datasets are deleted. Only datasets named `pr_<number>_*` can be deleted by this workflow |
+
+![PR cleanup run triggered by closing PR #2](images/pr-cleanup-run.png)
+
+*The clean-up run started by closing PR #2: one job, "Drop pull request datasets", finished in 24 seconds.*
+
+## 8. Change log: monitoring every layer
+
+The first version of this project watched the schema of **BRONZE only**. A
+question during the showcase ("what if someone changes a SILVER or GOLD
+table?") exposed the gap, and [PR #4](https://github.com/flaviobrito/bigquery-schemachange/pull/4) closed it.
+
+| | |
+| --- | --- |
+| **Before** | Code changes: GOLD protected by contracts; SILVER only partially (columns with tests). Manual `ALTER TABLE` in SILVER/GOLD: **not detected**; silently overwritten by the next `dbt build`, or kept forever on the incremental `stg_ecommerce__orders`. The drift audit compared BRONZE only |
+| **What was done** | 1) Contracts on every SILVER model (all columns typed, `numeric(18, 2)` precision). 2) `audit_schema_snapshots` and `audit_schema_drift` read the `INFORMATION_SCHEMA` of BRONZE, SILVER and GOLD and compare them with dbt sources and model contracts; each row has a `layer`. 3) New test `assert_no_model_schema_drift`. 4) dbt's transient tables (`__dbt_tmp`, `__dbt_backup`) are ignored, so an incremental merge running at the same time is not reported as drift. 5) The monitor can target `dev` or `prod`, has its own queue (a deployment waiting for approval no longer blocks it) and alerts name the layer and the missing declaration |
+| **After** | Code changes: blocked by contracts in SILVER and GOLD. Manual changes in any layer: detected by the monitor, alerted, and the build is stopped before it can overwrite the evidence |
+| **Objective** | Every structural change, wherever it is made, is either reviewed in Git or reported |
+| **Effect** | Validated on DEV: 71 checks passed with drift aligned on all three layers; scenario 5 shows a manual change detected and resolved |
+
+How the audit decides, for each column it finds:
+
+```mermaid
+flowchart TD
+    P[Column found in INFORMATION_SCHEMA<br/>of bronze, silver or gold] --> Q{Declared in dbt?<br/>sources for BRONZE,<br/>model contract for SILVER/GOLD}
+    Q -- no --> U["❌ undeclared_in_dbt"]
+    Q -- yes --> T{Same type?}
+    T -- no --> M["❌ type_mismatch"]
+    T -- yes --> A["✅ aligned"]
+    D[Column declared in dbt] --> E{Exists in BigQuery?}
+    E -- no --> X["❌ missing_in_database<br/>(SILVER/GOLD only if the model was built)"]
+```
+
+## 9. Reading the run reports
 
 Every integration, deploy and monitor run ends with a **Schema and data quality
 report**, written to the run's *Summary* page (visible to signed-in GitHub users;
@@ -522,8 +678,8 @@ the same text is printed in the step log). It has four parts:
 | Section | Answers | Source |
 | ------- | ------- | ------ |
 | **Schema migrations** | Which structural changes were applied, when, and how long they took? | `<env>_audit.deployment_history` (view over the change history) |
-| **BRONZE schema: most recent columns** | What does the source data look like now, and which columns are new or were dropped? | `<env>_audit.audit_schema_snapshots` |
-| **Schema drift** | Do BigQuery and the dbt declarations agree? | `<env>_audit.audit_schema_drift` |
+| **Schema: most recent columns** | What do BRONZE, SILVER and GOLD look like now, and which columns are new or were dropped? | `<env>_audit.audit_schema_snapshots` |
+| **Schema drift** | Do BigQuery and the dbt declarations agree, in every layer? | `<env>_audit.audit_schema_drift` |
 | **dbt** | How many checks passed, warned or failed, and which ones? | `dbt/target/run_results.json` |
 
 How to read the icons:
@@ -548,7 +704,7 @@ where drift_status != 'aligned';                          -- current drift
 select * from `<project>.prod_audit.load_summary`;          -- data loaded per day
 ```
 
-## 8. Day-to-day workflow
+## 10. Day-to-day workflow
 
 ```mermaid
 flowchart LR
@@ -580,7 +736,7 @@ flowchart LR
 - Prefer `if not exists` / `if exists` in migrations so they are safe to re-run.
 - A red pipeline is the system working: read the report before retrying.
 
-## 9. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom (where)                                         | Cause                                                       | Fix |
 | ------------------------------------------------------- | ----------------------------------------------------------- | --- |
@@ -588,6 +744,8 @@ flowchart LR
 | `... was already applied and has been modified. Versioned scripts are immutable` | Someone edited an applied `V` script | Revert the edit and put the change in a new `V` script |
 | `... is older than the latest applied version`          | A new script has a version lower than one already applied   | Rename it to the next version, or deploy with `--out-of-order` |
 | `assert_no_bronze_schema_drift` fails                    | BRONZE and the dbt sources disagree                         | Open the run report's *Schema drift* table; declare or remove the column |
+| `assert_no_model_schema_drift` fails / monitor alert on SILVER or GOLD | A table was changed outside dbt, or a contract is stale | Rebuild the model (`dbt build --select <model>`) to revert, or make the change official in the model and its contract |
+| Monitor stays *Queued*                                   | Fixed: it used to share the deployment queue and waited behind a deployment pending approval | Each environment now has its own monitor queue |
 | `Not found: Table ...dev_audit...` while cloning (CI)   | A DEV deployment replaced audit tables while CI was copying them | Fixed: only stateful AUDIT tables are cloned and vanished tables are skipped; re-run the job |
 | `Access Denied: ... bigquery.jobs.create` (local)       | Application Default Credentials belong to another account    | `gcloud auth application-default login --project <project>` |
 | `Query exceeded limit for bytes billed`                  | A job would read more than 1 GiB                            | Intended protection; filter the query or raise `maximum-bytes-billed` consciously |
@@ -596,19 +754,22 @@ flowchart LR
 
 ### Lessons from building this showcase
 
-Two real problems were found and fixed while running the pipelines for the
-first time. They are kept here because they explain design decisions:
+Real problems found and fixed while running the pipelines. They are kept here because they explain design decisions:
 
 1. **Checksums must not depend on the environment.** Migrations contain the
    environment's dataset names (`{{ env }}_bronze`). Computing the immutability
    checksum on the *rendered* SQL made every pull request clone look like an
    edited migration. Versioned scripts are now fingerprinted on the raw file;
    rows written in the old format are upgraded automatically, once.
-2. **Clones race with deployments.** Copying every AUDIT table failed when a DEV
+2. **dbt's temporary tables are not drift.** An incremental model is merged
+   through a temporary `__dbt_tmp` table. When the drift test ran at the same
+   moment, it reported that table as undeclared. dbt's transient relations are
+   now ignored by the audit.
+3. **Clones race with deployments.** Copying every AUDIT table failed when a DEV
    deployment recreated the stored test failures at the same moment. Only tables
    with history are cloned now, and tables that disappear mid-copy are skipped.
 
-## 10. Glossary
+## 12. Glossary
 
 | Term                     | Meaning |
 | ------------------------ | ------- |

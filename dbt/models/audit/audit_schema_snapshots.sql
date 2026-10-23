@@ -1,4 +1,4 @@
--- Physical column history of every medallion layer (BRONZE, SILVER, GOLD).
+-- Physical column history of every monitored layer (var('monitored_layers')).
 -- Each column signature (dataset, table, column, type) is inserted once with
 -- first_seen_at; later runs only refresh last_seen_at, so dropped or retyped
 -- columns keep their history.
@@ -14,7 +14,7 @@
 
 with physical_columns as (
 
-    {{ physical_columns(monitored_datasets()) }}
+    {{ physical_columns(monitored_layers()) }}
 
 )
 
@@ -22,7 +22,7 @@ select
     {{ dbt_utils.generate_surrogate_key(
         ['table_schema', 'table_name', 'column_name', 'data_type']
     ) }} as column_signature,
-    regexp_extract(table_schema, r'_([a-z]+)$') as layer,
+    layer,
     table_schema,
     table_name,
     column_name,

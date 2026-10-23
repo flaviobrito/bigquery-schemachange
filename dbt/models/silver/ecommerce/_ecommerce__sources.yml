@@ -10,7 +10,7 @@ sources:
   - name: ecommerce
     description: Raw storefront exports landed by ops/load_sample_data.py.
     database: "{{ target.project }}"
-    schema: "{{ env_var('BQ_ENV') }}_bronze"
+    schema: "{{ env_var('BQ_ENV') }}_{{ var('layers')['bronze'] }}"
     config:
       loaded_at_field: _loaded_at
       freshness:

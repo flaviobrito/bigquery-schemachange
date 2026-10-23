@@ -26,8 +26,6 @@ STATUS_LABELS = {
     "undeclared_in_dbt": "exists in BigQuery but is not declared in",
     "type_mismatch": "data type differs between BigQuery and dbt",
 }
-# Where the declaration lives: sources for BRONZE, model contracts elsewhere.
-DECLARATION = {"bronze": "the dbt sources"}
 
 
 @dataclass(frozen=True)
@@ -38,6 +36,7 @@ class Drift:
     status: str
     physical_data_type: str | None
     declared_data_type: str | None
+    declared_in: str = "dbt"
 
 
 def fetch_drift(environment: str) -> list[Drift]:
@@ -46,7 +45,7 @@ def fetch_drift(environment: str) -> list[Drift]:
     rows = bq.query(
         f"""
         select layer, table_name, column_name, drift_status, physical_data_type,
-            declared_data_type
+            declared_data_type, declared_in
         from `{view}`
         where drift_status != 'aligned'
         order by layer, table_name, column_name
@@ -60,7 +59,7 @@ def build_message(environment: str, drifts: list[Drift]) -> str:
     for drift in drifts:
         detail = STATUS_LABELS.get(drift.status, drift.status)
         if drift.status == "undeclared_in_dbt":
-            detail += f" {DECLARATION.get(drift.layer, 'the dbt model contracts')}"
+            detail += f" the {drift.declared_in}"
         if drift.status == "type_mismatch":
             detail += f" ({drift.physical_data_type} vs {drift.declared_data_type})"
         lines.append(f"- {drift.layer.upper()} {drift.table_name}.{drift.column_name}: {detail}")

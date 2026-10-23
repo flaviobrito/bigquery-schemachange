@@ -339,3 +339,24 @@ def test_new_scripts_show_their_content_in_the_summary(project, tmp_path, monkey
     content = summary.read_text()
     assert "View changes in <code>versioned/V1.0.0__first.sql</code>" in content
     assert "+create schema `{{ env }}_a`" in content
+
+
+def test_layers_map_and_schema_log_layers(project):
+    config_file = project / "bqchange.yml"
+    config_file.write_text(
+        config_file.read_text() + "layers:\n  raw_vault: \"{{ env_var('BQ_ENV') }}_raw_vault\"\n"
+        "  marts: \"{{ env_var('BQ_ENV') }}_marts\"\n"
+        "schema-log-layers: [raw_vault, marts]\n"
+    )
+    config = load_config(config_file)
+    assert config.schema_log_datasets == {"raw_vault": "dev_raw_vault", "marts": "dev_marts"}
+    assert config.meta_dataset == "dev_meta"
+    other = load_config(config_file, environ={"BQ_ENV": "pr_9"})
+    assert other.layers["marts"] == "pr_9_marts"
+
+
+def test_schema_log_layers_must_be_declared(project):
+    config_file = project / "bqchange.yml"
+    config_file.write_text(config_file.read_text() + "layers: {}\nschema-log-layers: [gold]\n")
+    with pytest.raises(ValueError, match="not declared in layers"):
+        load_config(config_file)

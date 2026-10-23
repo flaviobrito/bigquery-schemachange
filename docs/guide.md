@@ -4,8 +4,8 @@ This guide explains **what this project does, why, and how to run it**, step by
 step. Every step lists what you do (**input**) and what you should see
 (**expected outcome**), with screenshots of real runs.
 
-> If you only want the commands, see the [README](../README.md). This document
-> is for understanding.
+> If you only want the commands, see the [README](../README.md) or the
+> [15-minute quickstart](quickstart.md). This document is for understanding.
 
 **Contents**
 
@@ -733,6 +733,41 @@ select customer_id, email, customer_segment from `<project>.prod_gold.dim_custom
 
 -- after (v2)
 select customer_id, email_domain, customer_segment from `<project>.prod_gold.dim_customers_v2`;
+```
+
+### Part 4: any layout, not only medallion
+
+| | |
+| --- | --- |
+| **Before** | The layer of a dataset was guessed from the end of its name (`dev_bronze` → `bronze`). A layout with underscores in layer names (`raw_vault`) or different names (`staging`, `marts`) would be misread, and several tools had the medallion layers hard-coded |
+| **What was done** | Layers are declared once, explicitly: `layers` in `migrations/bqchange.yml` (layer → dataset) for bqchange and the `ops/` tools, and `vars.layers` in `dbt/dbt_project.yml` for dbt. `schema-log-layers`, `pr-clone-layers`, `monitored_layers` and `source_layers` choose what is logged, cloned, audited and treated as migration-owned. Nothing is inferred from names any more (except to read snapshots written before this change) |
+| **After** | The same pipeline works for medallion, staging/marts, Kimball or Data Vault by editing two small maps |
+| **Objective** | The tooling must not impose a modelling style |
+| **Effect** | Validated on DEV with the medallion map: migrations, schema log, drift audit and report unchanged; unit tests cover a Data Vault layout (`raw_vault`, `marts`) |
+
+Example: switching to a staging/marts layout
+
+```yaml
+# migrations/bqchange.yml
+layers:
+  raw: "{{ env_var('BQ_ENV') }}_raw"
+  staging: "{{ env_var('BQ_ENV') }}_staging"
+  marts: "{{ env_var('BQ_ENV') }}_marts"
+  audit: "{{ env_var('BQ_ENV') }}_audit"
+schema-log-layers: [raw, staging, marts]
+pr-clone-layers: [raw, audit]
+```
+
+```yaml
+# dbt/dbt_project.yml
+vars:
+  layers: {raw: raw, staging: staging, marts: marts, audit: audit}
+  monitored_layers: [raw, staging, marts]
+  source_layers: [raw]
+models:
+  ecommerce:
+    staging: {+schema: staging}
+    marts: {+schema: marts}
 ```
 
 How the audit decides, for each column it finds:

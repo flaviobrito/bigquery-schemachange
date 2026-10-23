@@ -79,7 +79,7 @@ class FakeExecutor:
 def test_record_logs_all_changes_in_one_insert_and_stores_state():
     current = [*BASE, ColumnState("gold", "dim_customers", "manual_note", "STRING")]
     executor = FakeExecutor(BASE, current)
-    log = SchemaLog(executor, "p", "dev_meta", ["dev_bronze", "dev_gold"])
+    log = SchemaLog(executor, "p", "dev_meta", {"bronze": "dev_bronze", "gold": "dev_gold"})
 
     changes = log.record("manual")
 
@@ -95,13 +95,13 @@ def test_record_logs_all_changes_in_one_insert_and_stores_state():
 
 def test_record_without_changes_does_not_insert():
     executor = FakeExecutor(BASE, BASE)
-    SchemaLog(executor, "p", "dev_meta", ["dev_bronze", "dev_gold"]).record("dbt")
+    SchemaLog(executor, "p", "dev_meta", {"bronze": "dev_bronze", "gold": "dev_gold"}).record("dbt")
     assert not any(sql.strip().startswith("insert") for sql, _ in executor.statements)
 
 
 def test_record_rejects_unknown_sources():
     with pytest.raises(ValueError):
-        SchemaLog(FakeExecutor(BASE, BASE), "p", "m", []).record("somebody")
+        SchemaLog(FakeExecutor(BASE, BASE), "p", "m", {}).record("somebody")
 
 
 def test_summary_tables_changes_and_condenses_baseline():
@@ -114,7 +114,7 @@ def test_summary_tables_changes_and_condenses_baseline():
 def test_a_pull_request_clone_compares_by_layer_not_dataset_name():
     """The clone inherits DEV's state (dev_*) but captures pr_7_* datasets."""
     executor = FakeExecutor(BASE, BASE)
-    log = SchemaLog(executor, "p", "pr_7_meta", ["pr_7_bronze", "pr_7_gold"])
+    log = SchemaLog(executor, "p", "pr_7_meta", {"bronze": "pr_7_bronze", "gold": "pr_7_gold"})
     assert log.record("manual") == []
 
 
@@ -133,7 +133,9 @@ def test_legacy_state_with_dataset_names_is_still_understood():
                 ]
             return super().query(sql)
 
-    log = SchemaLog(Legacy(BASE, BASE), "p", "dev_meta", ["dev_bronze", "dev_gold"])
+    log = SchemaLog(
+        Legacy(BASE, BASE), "p", "dev_meta", {"bronze": "dev_bronze", "gold": "dev_gold"}
+    )
     assert log.record("dbt") == []
 
 
@@ -156,9 +158,37 @@ def test_pull_request_state_keeps_unbuilt_tables_for_the_next_step():
     """After migrations (BRONZE only) the GOLD state must survive for the dbt step."""
     bronze_only = [ColumnState("bronze", "customers", "customer_id", "STRING")]
     executor = FakeExecutor(BASE, bronze_only)
-    log = SchemaLog(executor, "p", "pr_7_meta", ["pr_7_bronze", "pr_7_gold"])
+    log = SchemaLog(executor, "p", "pr_7_meta", {"bronze": "pr_7_bronze", "gold": "pr_7_gold"})
     assert log.record("migration", ignore_missing_tables=True) == []
 
     state = next(p for sql, p in executor.statements if "schema_state" in sql and p)
     stored = {(c["layer"], c["table_name"], c["column_name"]) for c in json.loads(state["state"])}
     assert ("gold", "dim_customers", "email") in stored
+
+
+def test_layers_can_have_any_name_including_underscores():
+    """Not tied to medallion naming: a Data Vault layout works the same way."""
+    vault = [
+        ColumnState("raw_vault", "hub_customer", "customer_hk", "BYTES"),
+        ColumnState("marts", "dim_customer", "customer_id", "STRING"),
+    ]
+    executor = FakeExecutor(None, [])
+    executor.query = lambda sql: (
+        (_ for _ in ()).throw(RuntimeError("Not found: schema_state"))
+        if "schema_state" in sql
+        else [
+            {k: v for k, v in c.__dict__.items() if k != "layer"}
+            for c in vault
+            if ("dev_raw_vault" in sql) == (c.layer == "raw_vault")
+        ]
+    )
+    log = SchemaLog(executor, "p", "dev_meta", {"raw_vault": "dev_raw_vault", "marts": "dev_marts"})
+    assert sorted(log.capture()) == sorted(vault)
+
+
+def test_capture_skips_datasets_that_do_not_exist_yet():
+    executor = FakeExecutor(None, BASE)
+    log = SchemaLog(
+        executor, "p", "dev_meta", {"bronze": "dev_bronze", "x": "missing", "gold": "dev_gold"}
+    )
+    assert len(log.capture()) == 3

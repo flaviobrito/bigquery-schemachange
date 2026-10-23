@@ -2,9 +2,9 @@
 
 BigQuery has no dataset-level clone, so each table is cloned individually with
 CREATE TABLE ... CLONE (copy-on-write: no storage is billed until data changes).
-Only BRONZE, META and the stateful AUDIT tables are cloned: SILVER/GOLD are
-rebuilt by dbt, which defers unmodified models to DEV, and stored test failures
-are recreated by every dbt run.
+Layers listed in `pr-clone-layers` of migrations/bqchange.yml are cloned, plus
+bqchange's meta dataset. dbt-built layers are rebuilt (unmodified models are
+deferred to DEV), and stored test failures are recreated by every dbt run.
 
 Examples:
     python -m ops.manage_environment clone --source dev --target pr_42
@@ -19,11 +19,10 @@ import logging
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
-from ops.environment import LAYERS, client, dataset_id, validate_environment
+from ops.environment import client, environment_config, environment_datasets, validate_environment
 
 logger = logging.getLogger(__name__)
 
-CLONED_LAYERS = ("bronze", "audit", "meta")
 # AUDIT tables whose history must carry over; the rest are dbt test failures.
 STATEFUL_AUDIT_TABLES = {"audit_schema_snapshots", "load_log"}
 PULL_REQUEST_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000
@@ -44,16 +43,18 @@ def clone_environment(source: str, target: str, bq: bigquery.Client | None = Non
     # Start from a clean copy: tables left by a previous run of the same pull
     # request would otherwise be compared with DEV's state.
     drop_environment(target, bq)
-    for layer in LAYERS:
-        dataset = bigquery.Dataset(dataset_id(bq.project, target, layer))
+    target_datasets = environment_datasets(target)
+    source_datasets = environment_datasets(source)
+    for layer, name in target_datasets.items():
+        dataset = bigquery.Dataset(f"{bq.project}.{name}")
         dataset.location = bq.location
         dataset.default_table_expiration_ms = PULL_REQUEST_EXPIRATION_MS
         dataset.labels = {"environment": target, "layer": layer, "managed_by": "ci"}
         bq.create_dataset(dataset, exists_ok=True)
 
-    for layer in CLONED_LAYERS:
-        source_dataset = dataset_id(bq.project, source, layer)
-        target_dataset = dataset_id(bq.project, target, layer)
+    for layer in [*environment_config(target).pr_clone_layers, "meta"]:
+        source_dataset = f"{bq.project}.{source_datasets[layer]}"
+        target_dataset = f"{bq.project}.{target_datasets[layer]}"
         for table in bq.list_tables(source_dataset):
             if not should_clone(layer, table.table_id, table.table_type):
                 continue
@@ -78,11 +79,9 @@ def should_clone(layer: str, table_id: str, table_type: str) -> bool:
 def drop_environment(target: str, bq: bigquery.Client | None = None) -> None:
     _require_pull_request(target)
     bq = bq or client()
-    for layer in LAYERS:
-        bq.delete_dataset(
-            dataset_id(bq.project, target, layer), delete_contents=True, not_found_ok=True
-        )
-        logger.info("Dropped %s_%s", target, layer)
+    for name in environment_datasets(target).values():
+        bq.delete_dataset(f"{bq.project}.{name}", delete_contents=True, not_found_ok=True)
+        logger.info("Dropped %s", name)
 
 
 def main() -> None:

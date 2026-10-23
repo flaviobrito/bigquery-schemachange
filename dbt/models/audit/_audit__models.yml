@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: audit_schema_snapshots
-    description: History of physical columns in the BRONZE dataset (first and last time each was seen).
+    description: History of physical columns in BRONZE, SILVER and GOLD (first and last time each was seen).
     columns:
       - name: column_signature
         description: Surrogate key of schema, table, column and data type.
@@ -10,7 +10,7 @@ models:
 
   - name: audit_schema_drift
     description: >
-      Physical BRONZE columns versus dbt source declarations. Read by
+      Physical BRONZE, SILVER and GOLD columns versus dbt declarations (sources and model contracts). Read by
       ops/check_schema_drift.py, which posts non-aligned rows to Slack/Teams.
     columns:
       - name: drift_status

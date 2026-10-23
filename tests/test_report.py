@@ -30,6 +30,7 @@ def test_drift_section_reports_alignment_and_problems():
     section = drift_section(
         [
             {
+                "layer": "bronze",
                 "table_name": "customers",
                 "column_name": "loyalty_tier",
                 "drift_status": "undeclared_in_dbt",
@@ -38,7 +39,7 @@ def test_drift_section_reports_alignment_and_problems():
             }
         ]
     )
-    assert "| customers | `loyalty_tier` | ❌ undeclared_in_dbt | STRING |  |" in section
+    assert "| BRONZE | customers | `loyalty_tier` | ❌ undeclared_in_dbt | STRING |  |" in section
 
 
 def test_dbt_section_counts_statuses_and_lists_failures():

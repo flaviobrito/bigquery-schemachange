@@ -5,6 +5,12 @@ name: Data quality monitor
 #     - cron: "0 9 * * *"
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to monitor
+        type: choice
+        options: [prod, dev]
+        default: prod
 
 concurrency:
   group: deploy
@@ -17,19 +23,19 @@ permissions:
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
-  BQ_ENV: prod
+  BQ_ENV: ${{ inputs.environment || 'prod' }}
   DBT_PROFILES_DIR: dbt
   DBT_PROJECT_DIR: dbt
-  DBT_TARGET: prod
+  DBT_TARGET: ${{ inputs.environment || 'prod' }}
   GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
   monitor:
-    name: Freshness, schema drift and data tests (PROD)
+    name: Freshness, schema drift and data tests (${{ inputs.environment || 'prod' }})
     if: vars.GCP_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment: production-monitoring
+    environment: ${{ inputs.environment == 'dev' && 'dev' || 'production-monitoring' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

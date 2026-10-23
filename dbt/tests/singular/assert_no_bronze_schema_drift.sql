@@ -4,4 +4,5 @@
 
 select *
 from {{ ref('audit_schema_drift') }}
-where drift_status != 'aligned'
+where layer = 'bronze'
+    and drift_status != 'aligned'

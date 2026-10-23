@@ -3,6 +3,8 @@ version: 2
 data_tests:
   - name: assert_no_bronze_schema_drift
     description: BRONZE physical columns match dbt source declarations.
+  - name: assert_no_model_schema_drift
+    description: SILVER and GOLD physical columns match the dbt model contracts.
   - name: assert_payments_do_not_exceed_order_total
     description: Net paid amount never exceeds the order total.
   - name: assert_revenue_reconciles_with_orders

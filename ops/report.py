@@ -2,8 +2,8 @@
 
 Sections:
     migrations  latest versioned/repeatable rows of <env>_audit.deployment_history
-    schema      newest BRONZE columns from <env>_audit.audit_schema_snapshots
-    drift       non-aligned rows of <env>_audit.audit_schema_drift
+    schema      newest columns of every layer from <env>_audit.audit_schema_snapshots
+    drift       non-aligned rows of <env>_audit.audit_schema_drift (all layers)
     dbt         results of the last dbt invocation (dbt/target/run_results.json)
 
 Example:
@@ -73,13 +73,14 @@ def migrations_section(rows: list[dict] | None) -> str:
 
 def schema_section(rows: list[dict] | None) -> str:
     if rows is None:
-        return f"#### BRONZE schema\n\n{UNAVAILABLE}"
+        return f"#### Schema\n\n{UNAVAILABLE}"
     if not rows:
-        return "#### BRONZE schema\n\nNo schema snapshot yet: run `dbt build` first."
+        return "#### Schema\n\nNo schema snapshot yet: run `dbt build` first."
     table = markdown_table(
-        ["Table", "Column", "Type", "First seen (UTC)", "Still present"],
+        ["Layer", "Table", "Column", "Type", "First seen (UTC)", "Still present"],
         (
             [
+                (row.get("layer") or "").upper(),
                 row["table_name"],
                 f"`{row['column_name']}`",
                 row["data_type"],
@@ -89,18 +90,19 @@ def schema_section(rows: list[dict] | None) -> str:
             for row in rows
         ),
     )
-    return f"#### BRONZE schema: most recent columns\n\n{table}"
+    return f"#### Schema: most recent columns (all layers)\n\n{table}"
 
 
 def drift_section(rows: list[dict] | None) -> str:
     if rows is None:
         return f"#### Schema drift\n\n{UNAVAILABLE}"
     if not rows:
-        return "#### Schema drift\n\n✅ BRONZE matches the dbt source declarations."
+        return "#### Schema drift\n\n✅ BRONZE, SILVER and GOLD match the dbt declarations."
     table = markdown_table(
-        ["Table", "Column", "Status", "BigQuery type", "Declared type"],
+        ["Layer", "Table", "Column", "Status", "BigQuery type", "Declared type"],
         (
             [
+                (row.get("layer") or "").upper(),
                 row["table_name"],
                 f"`{row['column_name']}`",
                 f"❌ {row['drift_status']}",
@@ -170,10 +172,10 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
                     query(
                         f"""
                         select
-                            table_name, column_name, data_type, first_seen_at,
+                            layer, table_name, column_name, data_type, first_seen_at,
                             last_seen_at = max(last_seen_at) over () as is_current
                         from `{audit}.audit_schema_snapshots`
-                        order by first_seen_at desc, table_name, ordinal_position desc
+                        order by first_seen_at desc, layer, table_name, ordinal_position desc
                         limit 10
                         """
                     )
@@ -184,7 +186,7 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
                 drift_section(
                     query(
                         f"select * from `{audit}.audit_schema_drift` "
-                        "where drift_status != 'aligned' order by table_name, column_name"
+                        "where drift_status != 'aligned' order by layer, table_name, column_name"
                     )
                 )
             )

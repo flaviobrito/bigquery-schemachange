@@ -24,6 +24,8 @@ from ops.environment import client, current_environment, dataset_id
 
 logger = logging.getLogger(__name__)
 
+UNAVAILABLE = "⚠️ Not available: the query failed (see the step log)."
+
 STATUS_ICONS = {
     "success": "✅",
     "pass": "✅",
@@ -43,7 +45,9 @@ def markdown_table(headers: list[str], rows: Iterable[Iterable[object]]) -> str:
     return "\n".join(lines)
 
 
-def migrations_section(rows: list[dict]) -> str:
+def migrations_section(rows: list[dict] | None) -> str:
+    if rows is None:
+        return f"#### Schema migrations (change history)\n\n{UNAVAILABLE}"
     if not rows:
         return "#### Migrations\n\nNo migrations recorded yet."
     table = markdown_table(
@@ -62,7 +66,9 @@ def migrations_section(rows: list[dict]) -> str:
     return f"#### Schema migrations (change history)\n\n{table}"
 
 
-def schema_section(rows: list[dict]) -> str:
+def schema_section(rows: list[dict] | None) -> str:
+    if rows is None:
+        return f"#### BRONZE schema\n\n{UNAVAILABLE}"
     if not rows:
         return "#### BRONZE schema\n\nNo schema snapshot yet: run `dbt build` first."
     table = markdown_table(
@@ -81,7 +87,9 @@ def schema_section(rows: list[dict]) -> str:
     return f"#### BRONZE schema: most recent columns\n\n{table}"
 
 
-def drift_section(rows: list[dict]) -> str:
+def drift_section(rows: list[dict] | None) -> str:
+    if rows is None:
+        return f"#### Schema drift\n\n{UNAVAILABLE}"
     if not rows:
         return "#### Schema drift\n\n✅ BRONZE matches the dbt source declarations."
     table = markdown_table(
@@ -133,12 +141,13 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
     bq = client() if set(sections) - {"dbt"} else None
     audit = dataset_id(bq.project, environment, "audit") if bq else ""
 
-    def query(sql: str) -> list[dict]:
+    def query(sql: str) -> list[dict] | None:
+        """Rows, or None when the query fails (never reported as a success)."""
         try:
             return [dict(row.items()) for row in bq.query(sql).result()]
         except Exception as error:  # audit objects may not exist yet
             logger.warning("Report query failed: %s", error)
-            return []
+            return None
 
     for section in sections:
         if section == "migrations":

@@ -307,12 +307,93 @@ yourself, and under **Deployment branches** allow only `main`.
 
 ## 8. Day-to-day workflow
 
-<!-- DAILY -->
+```mermaid
+flowchart LR
+    A[Create a branch] --> B[Add a migration and/or<br/>change dbt models]
+    B --> C[Run locally:<br/>make lint test-python]
+    C --> D[Open a pull request]
+    D --> E{CI green?}
+    E -- no --> F[Read the run report,<br/>fix, push again] --> E
+    E -- yes --> G[Review and merge]
+    G --> H[DEV deploys automatically]
+    H --> I[Approve production]
+    I --> J[PROD deploys]
+```
+
+### Adding a column, the right way
+
+| # | You do                                                                 | Expected outcome |
+| - | ---------------------------------------------------------------------- | ---------------- |
+| 1 | Create `migrations/scripts/versioned/V1.5.0__add_<something>.sql` with `alter table ... add column if not exists ...` | `uv run bqchange render versioned/V1.5.0__....sql` prints the SQL with your environment's dataset names |
+| 2 | Declare the column in `dbt/models/silver/ecommerce/_ecommerce__sources.yml` (name and `data_type`) | `make lint` passes |
+| 3 | Use the column in a SILVER model if needed, and add tests              | `make lint` passes |
+| 4 | Open a pull request                                                    | CI applies **only** `V1.5.0` in `pr_<n>` datasets, schema drift is ✅, tests pass |
+| 5 | Merge, then approve production                                         | `V1.5.0` appears in the DEV and PROD change history and in the run reports |
+
+### Rules of thumb
+
+- Never edit a versioned script that was merged: add a new version.
+- Every BRONZE column must be declared in the dbt sources.
+- Prefer `if not exists` / `if exists` in migrations so they are safe to re-run.
+- A red pipeline is the system working: read the report before retrying.
 
 ## 9. Troubleshooting
 
-<!-- TROUBLESHOOTING -->
+| Symptom (where)                                         | Cause                                                       | Fix |
+| ------------------------------------------------------- | ----------------------------------------------------------- | --- |
+| `Permission 'iam.serviceAccounts.getAccessToken' denied` (first CI/deploy run) | Workload Identity permissions take minutes to propagate after `setup_gcp.sh` | Wait 3–5 minutes, then **Re-run failed jobs** |
+| `... was already applied and has been modified. Versioned scripts are immutable` | Someone edited an applied `V` script | Revert the edit and put the change in a new `V` script |
+| `... is older than the latest applied version`          | A new script has a version lower than one already applied   | Rename it to the next version, or deploy with `--out-of-order` |
+| `assert_no_bronze_schema_drift` fails                    | BRONZE and the dbt sources disagree                         | Open the run report's *Schema drift* table; declare or remove the column |
+| `Not found: Table ...dev_audit...` while cloning (CI)   | A DEV deployment replaced audit tables while CI was copying them | Fixed: only stateful AUDIT tables are cloned and vanished tables are skipped; re-run the job |
+| `Access Denied: ... bigquery.jobs.create` (local)       | Application Default Credentials belong to another account    | `gcloud auth application-default login --project <project>` |
+| `Query exceeded limit for bytes billed`                  | A job would read more than 1 GiB                            | Intended protection; filter the query or raise `maximum-bytes-billed` consciously |
+| Deployment waits forever                                 | The `production` environment needs approval                 | Open the run → **Review deployments** → approve or reject |
+| Jobs that need Google Cloud are *skipped*                | `GCP_ENABLED` is not `true` or the PR comes from a fork      | Set the variable; forks never receive credentials by design |
+
+### Lessons from building this showcase
+
+Two real problems were found and fixed while running the pipelines for the
+first time. They are kept here because they explain design decisions:
+
+1. **Checksums must not depend on the environment.** Migrations contain the
+   environment's dataset names (`{{ env }}_bronze`). Computing the immutability
+   checksum on the *rendered* SQL made every pull request clone look like an
+   edited migration. Versioned scripts are now fingerprinted on the raw file;
+   rows written in the old format are upgraded automatically, once.
+2. **Clones race with deployments.** Copying every AUDIT table failed when a DEV
+   deployment recreated the stored test failures at the same moment. Only tables
+   with history are cloned now, and tables that disappear mid-copy are skipped.
 
 ## 10. Glossary
 
-<!-- GLOSSARY -->
+| Term                     | Meaning |
+| ------------------------ | ------- |
+| **ADC**                  | Application Default Credentials: the login that Google libraries use on your machine (`gcloud auth application-default login`) |
+| **Approval / reviewer**  | A person who must click *Approve* before a protected GitHub environment runs |
+| **BRONZE / SILVER / GOLD** | Raw, cleaned and business-ready layers of the medallion architecture |
+| **Change history**       | Table recording every applied migration with its checksum and time (`<env>_meta.change_history`) |
+| **Checksum**             | A fingerprint of a file; any edit changes it |
+| **CI / CD**              | Automatic checks on every change / automatic deployment after merge |
+| **Clone (table clone)**  | An instant, copy-on-write copy of a BigQuery table |
+| **Contract**             | A declared list of columns and types a dbt model must produce |
+| **Dataset**              | A BigQuery folder of tables, views and functions |
+| **dbt**                  | The tool that builds SILVER and GOLD from SQL and tests them |
+| **Defer**                | dbt reuses DEV tables for models a pull request did not change |
+| **Dry run**              | BigQuery validates a query and estimates its cost without running it |
+| **Environment**          | An isolated copy of all datasets (`dev`, `prod`, `pr_<n>`) |
+| **Incremental model**    | A dbt table that only processes new rows on each run |
+| **INFORMATION_SCHEMA**   | BigQuery's built-in catalogue of tables and columns |
+| **Job summary**          | The Markdown report shown on a GitHub Actions run page |
+| **Lineage**              | The graph of which table feeds which |
+| **Migration**            | A versioned SQL file that changes the database structure |
+| **OIDC**                 | The open standard GitHub uses to issue identity tokens to workflows |
+| **Pull request (PR)**    | A proposed change, reviewed and tested before merging |
+| **Schema**               | The structure of the data: tables, columns, types |
+| **Schema drift**         | Disagreement between the real schema and the declared one |
+| **Secret (GitHub)**      | An encrypted value available to workflows and masked as `***` in logs |
+| **Service account**      | A non-human Google identity used by automation |
+| **Severity (warn/error)**| Whether a failed check is reported only or stops the pipeline |
+| **Unit test (dbt)**      | Fake input rows → model → compared with expected output rows |
+| **Workflow / job / step**| A GitHub Actions automation / a group of steps on one machine / one command |
+| **Workload Identity Federation** | Keyless authentication: GitHub's identity token is exchanged for short-lived Google credentials |

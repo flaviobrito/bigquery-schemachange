@@ -1,4 +1,4 @@
-"""Report BRONZE schema drift (<env>_audit.audit_schema_drift) to Slack or Microsoft Teams.
+"""Report schema drift of every layer (<env>_audit.audit_schema_drift) to Slack or Microsoft Teams.
 
 The view is built by dbt; this script only reads it. Without a webhook the
 report is printed, which keeps the script useful locally and in CI logs.
@@ -23,13 +23,16 @@ logger = logging.getLogger(__name__)
 
 STATUS_LABELS = {
     "missing_in_database": "declared in dbt but missing in BigQuery",
-    "undeclared_in_dbt": "exists in BigQuery but is not declared in dbt sources",
+    "undeclared_in_dbt": "exists in BigQuery but is not declared in",
     "type_mismatch": "data type differs between BigQuery and dbt",
 }
+# Where the declaration lives: sources for BRONZE, model contracts elsewhere.
+DECLARATION = {"bronze": "the dbt sources"}
 
 
 @dataclass(frozen=True)
 class Drift:
+    layer: str
     table_name: str
     column_name: str
     status: str
@@ -42,22 +45,25 @@ def fetch_drift(environment: str) -> list[Drift]:
     view = f"{dataset_id(bq.project, environment, 'audit')}.audit_schema_drift"
     rows = bq.query(
         f"""
-        select table_name, column_name, drift_status, physical_data_type, declared_data_type
+        select layer, table_name, column_name, drift_status, physical_data_type,
+            declared_data_type
         from `{view}`
         where drift_status != 'aligned'
-        order by table_name, column_name
+        order by layer, table_name, column_name
         """
     ).result()
     return [Drift(*row.values()) for row in rows]
 
 
 def build_message(environment: str, drifts: list[Drift]) -> str:
-    lines = [f"Schema drift detected in {environment}_bronze ({len(drifts)} column(s))"]
+    lines = [f"Schema drift detected in {environment} ({len(drifts)} column(s))"]
     for drift in drifts:
         detail = STATUS_LABELS.get(drift.status, drift.status)
+        if drift.status == "undeclared_in_dbt":
+            detail += f" {DECLARATION.get(drift.layer, 'the dbt model contracts')}"
         if drift.status == "type_mismatch":
             detail += f" ({drift.physical_data_type} vs {drift.declared_data_type})"
-        lines.append(f"- {drift.table_name}.{drift.column_name}: {detail}")
+        lines.append(f"- {drift.layer.upper()} {drift.table_name}.{drift.column_name}: {detail}")
     if run_url := os.environ.get("GITHUB_RUN_URL"):
         lines.append(f"Run: {run_url}")
     return "\n".join(lines)
@@ -85,7 +91,7 @@ def main() -> int:
     environment = current_environment()
     drifts = fetch_drift(environment)
     if not drifts:
-        logger.info("No schema drift in %s_bronze", environment)
+        logger.info("No schema drift in %s", environment)
         return 0
 
     message = build_message(environment, drifts)

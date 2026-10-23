@@ -32,9 +32,9 @@ joined as (
         coalesce(items.items_amount, 0) as items_amount,
         orders.discount_amount,
         orders.shipping_amount,
+        -- Simplify the total: shipping is billed separately.
         coalesce(items.items_amount, 0)
-        - orders.discount_amount
-        + orders.shipping_amount as order_total,
+        - orders.discount_amount as order_total,
         coalesce(items.items_cost, 0) as items_cost,
         coalesce(payments.approved_amount, 0) as approved_payment_amount,
         coalesce(payments.refunded_amount, 0) as refunded_payment_amount,

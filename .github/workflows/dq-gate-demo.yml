@@ -1,0 +1,62 @@
+name: Data quality gate demo
+
+# Showcase: loads deliberately broken data into a throwaway environment cloned
+# from DEV and runs the dbt quality gate, which is expected to FAIL and block.
+# The broken data never reaches DEV or PROD; the environment is always dropped.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: dq-gate-demo
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+  BQ_ENV: pr_${{ github.run_id }}
+  DBT_PROFILES_DIR: dbt
+  DBT_PROJECT_DIR: dbt
+  DBT_TARGET: ci
+
+jobs:
+  quality-gate:
+    name: Bad data is blocked by the quality gate
+    if: vars.GCP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-gcp
+        with:
+          workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Clone DEV into a throwaway environment
+        run: uv run python -m ops.manage_environment clone --source dev --target "$BQ_ENV"
+
+      - name: Apply migrations
+        run: uv run bqchange deploy
+
+      # Invalid emails, an order for a non-existent customer, a negative price
+      # and an unknown order status.
+      - name: Load broken data
+        run: |
+          uv run python -m ops.generate_sample_data --output-dir data/bad --inject-anomalies
+          uv run python -m ops.load_sample_data --input-dir data/bad
+
+      - name: Quality gate (dbt build)
+        run: uv run dbt build --exclude-resource-type unit_test
+
+      - name: Schema and data quality report
+        if: always()
+        run: uv run python -m ops.report --sections dbt
+
+      - name: Drop throwaway environment
+        if: always()
+        run: uv run python -m ops.manage_environment drop --target "$BQ_ENV"

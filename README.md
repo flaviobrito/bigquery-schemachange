@@ -146,11 +146,24 @@ flowchart LR
 | `deploy.yml`     | push to `main`, manual  | DEV, then PROD behind the `production` environment approval; dbt docs artifact |
 | `monitor.yml`    | manual                  | Source freshness, schema drift alert and the full data test suite on PROD |
 | `pr-cleanup.yml` | pull request closed     | Drops the pull request datasets                                      |
+| `dq-gate-demo.yml` | manual               | Loads deliberately broken data into a throwaway environment; the quality gate is expected to fail |
 
 Each run writes a **job summary** with the migrations planned and applied, the
 newest BRONZE columns, schema drift and dbt results, so schema changes are
 visible directly on the run page. The monitor is manual for this showcase; add a
 `schedule` trigger for daily production monitoring.
+
+## Quality gate in action
+
+The pipeline is designed to stop bad changes. These cases are reproduced in the
+repository's pull requests and workflow runs:
+
+| Change                                                    | Blocked by                                             |
+| --------------------------------------------------------- | ------------------------------------------------------ |
+| Migration adds a BRONZE column not declared in dbt sources | `assert_no_bronze_schema_drift` (schema drift audit)   |
+| Logic bug: order total ignores shipping                    | `fct_orders` unit test and `order_total` expression test |
+| Edit of an already applied versioned migration             | bqchange immutability check                            |
+| Broken source data (invalid values, orphans, negative prices) | SILVER data tests (`dq-gate-demo.yml`)              |
 
 ## Getting started
 

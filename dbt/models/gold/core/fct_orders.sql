@@ -1,4 +1,6 @@
 -- Order grain fact. order_total = items - discount + shipping.
+-- Clustered by customer: customer-level analysis reads fewer blocks.
+{{ config(cluster_by=['customer_id']) }}
 with orders as (
 
     select * from {{ ref('stg_ecommerce__orders') }}

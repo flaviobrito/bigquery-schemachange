@@ -2,8 +2,9 @@
 
 BigQuery has no dataset-level clone, so each table is cloned individually with
 CREATE TABLE ... CLONE (copy-on-write: no storage is billed until data changes).
-Only BRONZE, AUDIT and META tables are cloned: SILVER/GOLD are rebuilt by dbt,
-which defers unmodified models to DEV.
+Only BRONZE, META and the stateful AUDIT tables are cloned: SILVER/GOLD are
+rebuilt by dbt, which defers unmodified models to DEV, and stored test failures
+are recreated by every dbt run.
 
 Examples:
     python -m ops.manage_environment clone --source dev --target pr_42
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 
+from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
 from ops.environment import LAYERS, client, dataset_id, validate_environment
@@ -22,6 +24,8 @@ from ops.environment import LAYERS, client, dataset_id, validate_environment
 logger = logging.getLogger(__name__)
 
 CLONED_LAYERS = ("bronze", "audit", "meta")
+# AUDIT tables whose history must carry over; the rest are dbt test failures.
+STATEFUL_AUDIT_TABLES = {"audit_schema_snapshots", "load_log"}
 PULL_REQUEST_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000
 
 
@@ -48,13 +52,24 @@ def clone_environment(source: str, target: str, bq: bigquery.Client | None = Non
         source_dataset = dataset_id(bq.project, source, layer)
         target_dataset = dataset_id(bq.project, target, layer)
         for table in bq.list_tables(source_dataset):
-            if table.table_type != "TABLE":
-                continue  # views are recreated by repeatable migrations and dbt
-            bq.query(
-                f"create or replace table `{target_dataset}.{table.table_id}` "
-                f"clone `{source_dataset}.{table.table_id}`"
-            ).result()
+            if not should_clone(layer, table.table_id, table.table_type):
+                continue
+            try:
+                bq.query(
+                    f"create or replace table `{target_dataset}.{table.table_id}` "
+                    f"clone `{source_dataset}.{table.table_id}`"
+                ).result()
+            except NotFound:
+                # A concurrent DEV run may replace tables while we iterate.
+                logger.warning("Skipped %s.%s: no longer exists", source_dataset, table.table_id)
+                continue
             logger.info("Cloned %s.%s", source_dataset, table.table_id)
+
+
+def should_clone(layer: str, table_id: str, table_type: str) -> bool:
+    if table_type != "TABLE":
+        return False  # views are recreated by repeatable migrations and dbt
+    return layer != "audit" or table_id in STATEFUL_AUDIT_TABLES
 
 
 def drop_environment(target: str, bq: bigquery.Client | None = None) -> None:

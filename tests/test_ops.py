@@ -14,14 +14,21 @@ def test_message_lists_every_drifted_column(monkeypatch):
     message = build_message(
         "prod",
         [
-            Drift("customers", "loyalty_tier", "undeclared_in_dbt", "STRING", None),
-            Drift("orders", "amount", "type_mismatch", "STRING", "NUMERIC"),
+            Drift("bronze", "customers", "loyalty_tier", "undeclared_in_dbt", "STRING", None),
+            Drift("gold", "dim_customers", "manual_note", "undeclared_in_dbt", "STRING", None),
+            Drift(
+                "silver", "stg_ecommerce__orders", "amount", "type_mismatch", "STRING", "NUMERIC"
+            ),
         ],
     )
     assert message.splitlines() == [
-        "Schema drift detected in prod_bronze (2 column(s))",
-        "- customers.loyalty_tier: exists in BigQuery but is not declared in dbt sources",
-        "- orders.amount: data type differs between BigQuery and dbt (STRING vs NUMERIC)",
+        "Schema drift detected in prod (3 column(s))",
+        "- BRONZE customers.loyalty_tier: exists in BigQuery but is not declared in "
+        "the dbt sources",
+        "- GOLD dim_customers.manual_note: exists in BigQuery but is not declared in "
+        "the dbt model contracts",
+        "- SILVER stg_ecommerce__orders.amount: data type differs between BigQuery and dbt "
+        "(STRING vs NUMERIC)",
     ]
 
 

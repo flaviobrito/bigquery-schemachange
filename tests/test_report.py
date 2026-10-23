@@ -30,6 +30,7 @@ def test_drift_section_reports_alignment_and_problems():
     section = drift_section(
         [
             {
+                "layer": "bronze",
                 "table_name": "customers",
                 "column_name": "loyalty_tier",
                 "drift_status": "undeclared_in_dbt",
@@ -38,7 +39,7 @@ def test_drift_section_reports_alignment_and_problems():
             }
         ]
     )
-    assert "| customers | `loyalty_tier` | ❌ undeclared_in_dbt | STRING |  |" in section
+    assert "| BRONZE | customers | `loyalty_tier` | ❌ undeclared_in_dbt | STRING |  |" in section
 
 
 def test_dbt_section_counts_statuses_and_lists_failures():
@@ -66,3 +67,53 @@ def test_failed_queries_are_never_reported_as_success():
     for section in (drift_section(None), migrations_section(None), schema_section(None)):
         assert "⚠️ Not available" in section
         assert "✅" not in section
+
+
+def test_dbt_messages_are_stripped_of_terminal_colours():
+    section = dbt_section(
+        {
+            "results": [
+                {
+                    "status": "fail",
+                    "unique_id": "unit_test.ecommerce.x.y",
+                    "message": "\x1b[32mactual\x1b[0m differs from \x1b[31mexpected\x1b[0m",
+                }
+            ]
+        }
+    )
+    assert "actual differs from expected" in section
+    assert "\x1b" not in section
+
+
+def test_history_section_shows_source_and_pull_request():
+    from ops.report import history_section
+
+    section = history_section(
+        [
+            {
+                "changed_at": WHEN,
+                "layer": "gold",
+                "table_name": "dim_customers",
+                "column_name": "manual_note",
+                "change_type": "added",
+                "old_data_type": None,
+                "new_data_type": "STRING",
+                "source": "manual",
+                "pull_request": None,
+            },
+            {
+                "changed_at": WHEN,
+                "layer": "bronze",
+                "table_name": "customers",
+                "column_name": "loyalty_tier",
+                "change_type": "added",
+                "old_data_type": None,
+                "new_data_type": "STRING",
+                "source": "migration",
+                "pull_request": "1",
+            },
+        ]
+    )
+    assert "| GOLD | dim_customers | `manual_note` | added |  | STRING | manual |  |" in section
+    assert "| migration | #1 |" in section
+    assert "⚠️" in history_section(None)

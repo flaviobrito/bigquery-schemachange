@@ -30,6 +30,7 @@ class Config:
     maximum_bytes_billed: int | None = None
     labels: dict[str, str] = field(default_factory=dict)
     vars: dict[str, Any] = field(default_factory=dict)
+    schema_log_datasets: list[str] = field(default_factory=list)
 
     @property
     def change_history_dataset(self) -> str:
@@ -62,4 +63,5 @@ def load_config(path: Path) -> Config:
         maximum_bytes_billed=raw.get("maximum-bytes-billed"),
         labels={str(k): str(v) for k, v in (raw.get("labels") or {}).items()},
         vars=raw.get("vars") or {},
+        schema_log_datasets=[str(d) for d in raw.get("schema-log-datasets") or []],
     )

@@ -15,6 +15,12 @@ maximum-bytes-billed: 1073741824
 labels:
   environment: "{{ env_var('BQ_ENV') }}"
   application: ecommerce
+# Datasets whose column-level changes are recorded by `bqchange record-schema`
+# in <env>_meta.schema_change_log (BRONZE by migrations, SILVER/GOLD by dbt).
+schema-log-datasets:
+  - "{{ env_var('BQ_ENV') }}_bronze"
+  - "{{ env_var('BQ_ENV') }}_silver"
+  - "{{ env_var('BQ_ENV') }}_gold"
 vars:
   env: "{{ env_var('BQ_ENV') }}"
   # Optional IAM principal granted read access to GOLD, e.g. group:analysts@example.com

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from bqchange.config import Config
 from bqchange.executor import Executor
 from bqchange.history import AppliedScript, ChangeHistory
 from bqchange.render import Renderer, checksum
+from bqchange.schema_log import SchemaLog
 from bqchange.scripts import Script, ScriptType, discover, parse_version
 from bqchange.summary import SummaryRow, render_summary, write_summary
 
@@ -26,6 +28,9 @@ class PendingScript:
     content: str
     checksum: str
     reason: str
+    source: str = ""
+    source_checksum: str = ""
+    diff: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,9 +49,28 @@ class ChecksumUpgrade:
 
 
 @dataclass(frozen=True)
+class SourceBackfill:
+    """An unchanged, applied script recorded before raw sources were stored."""
+
+    script: str
+    checksum: str
+    source_checksum: str
+    source: str
+
+
+@dataclass(frozen=True)
 class Plan:
     pending: list[PendingScript]
     checksum_upgrades: list[ChecksumUpgrade]
+    source_backfills: list[SourceBackfill] = field(default_factory=list)
+
+
+def unified_diff(before: str, after: str) -> str:
+    return "\n".join(
+        difflib.unified_diff(
+            before.splitlines(), after.splitlines(), "applied", "this change", lineterm=""
+        )
+    )
 
 
 def plan(
@@ -64,12 +88,29 @@ def plan(
 
     pending: list[PendingScript] = []
     upgrades: list[ChecksumUpgrade] = []
+    backfills: list[SourceBackfill] = []
+    environment = variables.get("env", "this environment")
     for script in scripts:
         content = renderer.render(script.relative_path, variables)
+        source = renderer.source(script.relative_path)
+        source_digest = checksum(source)
         previous = applied_by_name.get(script.name)
+        if (
+            previous
+            and previous.source_checksum is None
+            and script.script_type is not ScriptType.ALWAYS
+        ):
+            unchanged = previous.checksum in {checksum(content), source_digest}
+            if unchanged:
+                final = (
+                    source_digest
+                    if script.script_type is ScriptType.VERSIONED
+                    else checksum(content)
+                )
+                backfills.append(SourceBackfill(script.name, final, source_digest, source))
 
         if script.script_type is ScriptType.VERSIONED:
-            digest = checksum(renderer.source(script.relative_path))
+            digest = source_digest
             if previous:
                 if previous.checksum == checksum(content) != digest:
                     upgrades.append(ChecksumUpgrade(script.name, previous.checksum, digest))
@@ -84,18 +125,46 @@ def plan(
                     f"{script.name} is older than the latest applied version "
                     f"{'.'.join(map(str, max_applied))}. Use --out-of-order to apply it."
                 )
-            pending.append(PendingScript(script, content, digest, "new version"))
+            pending.append(
+                PendingScript(
+                    script,
+                    content,
+                    digest,
+                    "new version",
+                    source,
+                    source_digest,
+                    unified_diff("", source),
+                )
+            )
             continue
 
         digest = checksum(content)
         if script.script_type is ScriptType.REPEATABLE:
             if previous is None:
-                pending.append(PendingScript(script, content, digest, "new repeatable"))
+                pending.append(
+                    PendingScript(
+                        script,
+                        content,
+                        digest,
+                        "new repeatable",
+                        source,
+                        source_digest,
+                        unified_diff("", source),
+                    )
+                )
             elif previous.checksum != digest:
-                pending.append(PendingScript(script, content, digest, "content changed"))
+                if previous.source_checksum == source_digest:
+                    reason, change = f"re-rendered for {environment} (file unchanged)", None
+                elif previous.script_source is not None:
+                    reason, change = "file changed", unified_diff(previous.script_source, source)
+                else:
+                    reason, change = "content changed", None
+                pending.append(
+                    PendingScript(script, content, digest, reason, source, source_digest, change)
+                )
         else:
-            pending.append(PendingScript(script, content, digest, "always"))
-    return Plan(pending, upgrades)
+            pending.append(PendingScript(script, content, digest, "always", source, source_digest))
+    return Plan(pending, upgrades, backfills)
 
 
 def deploy(
@@ -107,6 +176,10 @@ def deploy(
     history = ChangeHistory(executor, config.change_history_table)
     if config.create_change_history_table and not dry_run:
         history.ensure(config.change_history_dataset)
+        if config.schema_log_datasets:
+            # Repeatable scripts may build views over the schema change log.
+            meta_dataset = config.change_history_dataset.split(".", 1)[1]
+            SchemaLog(executor, config.project, meta_dataset, config.schema_log_datasets).ensure()
 
     try:
         applied = history.applied()
@@ -126,6 +199,12 @@ def deploy(
         else:
             history.update_checksum(upgrade.script, upgrade.old, upgrade.new)
             logger.info("UPGRADE checksum of %s", upgrade.script)
+    if not dry_run:
+        for backfill in result.source_backfills:
+            history.backfill_source(
+                backfill.script, backfill.checksum, backfill.source_checksum, backfill.source
+            )
+            logger.info("BACKFILL source of %s", backfill.script)
 
     environment = str(config.vars.get("env", config.change_history_dataset))
     title = "bqchange plan (dry run)" if dry_run else "bqchange deploy"
@@ -142,6 +221,7 @@ def deploy(
             "script": item.script.relative_path,
             "script_type": item.script.script_type.value,
             "reason": item.reason,
+            "diff": item.diff,
         }
         label = f"{item.script.relative_path} ({item.reason})"
         if dry_run:
@@ -176,6 +256,8 @@ def deploy(
             description=item.script.description,
             checksum=item.checksum,
             execution_time_ms=elapsed_ms,
+            source_checksum=item.source_checksum,
+            script_source=item.source,
         )
         rows.append(SummaryRow(**row, outcome=f"✅ applied in {elapsed_ms:,} ms"))
 

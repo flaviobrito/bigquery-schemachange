@@ -1,4 +1,5 @@
--- Customer dimension with lifetime value and behavioural segment.
+-- Version 2: privacy-safe customer dimension. The raw email is no longer
+-- exposed in GOLD; email_domain keeps channel analysis possible.
 with customers as (
 
     select * from {{ ref('stg_ecommerce__customers') }}
@@ -28,7 +29,7 @@ customer_orders as (
 select
     customers.customer_id,
     customers.full_name,
-    customers.email,
+    lower(split(customers.email, '@')[safe_offset(1)]) as email_domain,
     customers.is_email_valid,
     customers.country_code,
     customers.state,

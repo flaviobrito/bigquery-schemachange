@@ -13,6 +13,7 @@ class SummaryRow:
     script_type: str
     reason: str
     outcome: str
+    diff: str | None = None
 
 
 def render_summary(title: str, environment: str, rows: list[SummaryRow]) -> str:
@@ -27,6 +28,19 @@ def render_summary(title: str, environment: str, rows: list[SummaryRow]) -> str:
             f"| `{row.script}` | {labels.get(row.script_type, row.script_type)} "
             f"| {row.reason} | {row.outcome} |"
         )
+    # What changed in each edited file, collapsed so the table stays readable.
+    for row in rows:
+        if row.diff:
+            lines += [
+                "",
+                f"<details><summary>View changes in <code>{row.script}</code></summary>",
+                "",
+                "```diff",
+                row.diff,
+                "```",
+                "",
+                "</details>",
+            ]
     return "\n".join(lines) + "\n"
 
 
@@ -35,3 +49,27 @@ def write_summary(markdown: str) -> None:
     if path := os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(path).open("a", encoding="utf-8") as handle:
             handle.write(markdown + "\n")
+
+
+def render_schema_changes(source: str, environment: str, changes: list) -> str:
+    """Markdown table of the schema changes recorded by `bqchange record-schema`."""
+    title = f"### Schema changes recorded ({source}) · `{environment}`"
+    if not changes:
+        return f"{title}\n\nNo schema change.\n"
+    if all(c.change_type.value == "baseline" for c in changes):
+        return f"{title}\n\nBaseline snapshot of {len(changes)} columns recorded.\n"
+    labels = {"added": "added", "removed": "removed", "type_changed": "type changed"}
+    lines = [
+        title,
+        "",
+        "| Layer | Table | Column | Change | Before | After |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for c in changes:
+        layer = c.layer.upper()
+        change = labels.get(c.change_type.value, c.change_type.value)
+        lines.append(
+            f"| {layer} | {c.table_name} | `{c.column_name}` | {change} "
+            f"| {c.old_data_type or ''} | {c.new_data_type or ''} |"
+        )
+    return "\n".join(lines) + "\n"

@@ -2,12 +2,13 @@
 
 Sections:
     migrations  latest versioned/repeatable rows of <env>_audit.deployment_history
-    schema      newest BRONZE columns from <env>_audit.audit_schema_snapshots
-    drift       non-aligned rows of <env>_audit.audit_schema_drift
+    history     column-level changes of every layer from <env>_audit.schema_history
+    schema      newest columns of every layer from <env>_audit.audit_schema_snapshots
+    drift       non-aligned rows of <env>_audit.audit_schema_drift (all layers)
     dbt         results of the last dbt invocation (dbt/target/run_results.json)
 
 Example:
-    python -m ops.report --sections migrations,schema,drift,dbt
+    python -m ops.report --sections migrations,history,drift,dbt
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import argparse
 import json
 import logging
 import os
+import re
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
@@ -25,6 +27,10 @@ from ops.environment import client, current_environment, dataset_id
 logger = logging.getLogger(__name__)
 
 UNAVAILABLE = "⚠️ Not available: the query failed (see the step log)."
+# dbt colours unit test diffs; terminal escape codes are noise in Markdown.
+ANSI_ESCAPES = re.compile(r"\x1b\[[0-9;]*m")
+# dbt appends a 10-character hash to long generic test names.
+TEST_HASH = re.compile(r"\.[0-9a-f]{10}$")
 
 STATUS_ICONS = {
     "success": "✅",
@@ -43,6 +49,32 @@ def markdown_table(headers: list[str], rows: Iterable[Iterable[object]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     lines += ["| " + " | ".join(cell(value) for value in row) + " |" for row in rows]
     return "\n".join(lines)
+
+
+def history_section(rows: list[dict] | None) -> str:
+    title = "#### Schema change history (all layers)"
+    if rows is None:
+        return f"{title}\n\n{UNAVAILABLE}"
+    if not rows:
+        return f"{title}\n\nNo schema change recorded yet."
+    table = markdown_table(
+        ["When (UTC)", "Layer", "Table", "Column", "Change", "Before", "After", "Source", "PR"],
+        (
+            [
+                row["changed_at"].strftime("%Y-%m-%d %H:%M"),
+                (row.get("layer") or "").upper(),
+                row["table_name"],
+                f"`{row['column_name']}`",
+                row["change_type"].replace("_", " "),
+                row["old_data_type"],
+                row["new_data_type"],
+                row["source"],
+                f"#{row['pull_request']}" if row.get("pull_request") else "",
+            ]
+            for row in rows
+        ),
+    )
+    return f"{title}\n\n{table}"
 
 
 def migrations_section(rows: list[dict] | None) -> str:
@@ -68,13 +100,14 @@ def migrations_section(rows: list[dict] | None) -> str:
 
 def schema_section(rows: list[dict] | None) -> str:
     if rows is None:
-        return f"#### BRONZE schema\n\n{UNAVAILABLE}"
+        return f"#### Schema\n\n{UNAVAILABLE}"
     if not rows:
-        return "#### BRONZE schema\n\nNo schema snapshot yet: run `dbt build` first."
+        return "#### Schema\n\nNo schema snapshot yet: run `dbt build` first."
     table = markdown_table(
-        ["Table", "Column", "Type", "First seen (UTC)", "Still present"],
+        ["Layer", "Table", "Column", "Type", "First seen (UTC)", "Still present"],
         (
             [
+                (row.get("layer") or "").upper(),
                 row["table_name"],
                 f"`{row['column_name']}`",
                 row["data_type"],
@@ -84,18 +117,19 @@ def schema_section(rows: list[dict] | None) -> str:
             for row in rows
         ),
     )
-    return f"#### BRONZE schema: most recent columns\n\n{table}"
+    return f"#### Schema: most recent columns (all layers)\n\n{table}"
 
 
 def drift_section(rows: list[dict] | None) -> str:
     if rows is None:
         return f"#### Schema drift\n\n{UNAVAILABLE}"
     if not rows:
-        return "#### Schema drift\n\n✅ BRONZE matches the dbt source declarations."
+        return "#### Schema drift\n\n✅ BRONZE, SILVER and GOLD match the dbt declarations."
     table = markdown_table(
-        ["Table", "Column", "Status", "BigQuery type", "Declared type"],
+        ["Layer", "Table", "Column", "Status", "BigQuery type", "Declared type"],
         (
             [
+                (row.get("layer") or "").upper(),
                 row["table_name"],
                 f"`{row['column_name']}`",
                 f"❌ {row['drift_status']}",
@@ -125,9 +159,9 @@ def dbt_section(run_results: dict) -> str:
             (
                 [
                     f"{STATUS_ICONS.get(r['status'], '')} {r['status']}",
-                    f"`{r['unique_id'].split('.', 2)[-1]}`",
+                    f"`{TEST_HASH.sub('', r['unique_id'].split('.', 2)[-1])}`",
                     r.get("failures") or "",
-                    (r.get("message") or "")[:200],
+                    ANSI_ESCAPES.sub("", r.get("message") or "")[:200],
                 ]
                 for r in problems
             ),
@@ -159,16 +193,18 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
                     )
                 )
             )
+        elif section == "history":
+            parts.append(history_section(query(f"select * from `{audit}.schema_history` limit 20")))
         elif section == "schema":
             parts.append(
                 schema_section(
                     query(
                         f"""
                         select
-                            table_name, column_name, data_type, first_seen_at,
+                            layer, table_name, column_name, data_type, first_seen_at,
                             last_seen_at = max(last_seen_at) over () as is_current
                         from `{audit}.audit_schema_snapshots`
-                        order by first_seen_at desc, table_name, ordinal_position desc
+                        order by first_seen_at desc, layer, table_name, ordinal_position desc
                         limit 10
                         """
                     )
@@ -179,7 +215,7 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
                 drift_section(
                     query(
                         f"select * from `{audit}.audit_schema_drift` "
-                        "where drift_status != 'aligned' order by table_name, column_name"
+                        "where drift_status != 'aligned' order by layer, table_name, column_name"
                     )
                 )
             )
@@ -194,7 +230,7 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sections", default="migrations,schema,drift,dbt")
+    parser.add_argument("--sections", default="migrations,history,drift,dbt")
     parser.add_argument("--run-results", type=Path, default=Path("dbt/target/run_results.json"))
     args = parser.parse_args()
 

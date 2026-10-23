@@ -150,3 +150,15 @@ def test_pull_request_mode_still_reports_changes_in_built_tables():
     ]
     changes = diff(BASE, current, ignore_missing_tables=True)
     assert [(c.change_type, c.column_name) for c in changes] == [(ChangeType.REMOVED, "email")]
+
+
+def test_pull_request_state_keeps_unbuilt_tables_for_the_next_step():
+    """After migrations (BRONZE only) the GOLD state must survive for the dbt step."""
+    bronze_only = [ColumnState("bronze", "customers", "customer_id", "STRING")]
+    executor = FakeExecutor(BASE, bronze_only)
+    log = SchemaLog(executor, "p", "pr_7_meta", ["pr_7_bronze", "pr_7_gold"])
+    assert log.record("migration", ignore_missing_tables=True) == []
+
+    state = next(p for sql, p in executor.statements if "schema_state" in sql and p)
+    stored = {(c["layer"], c["table_name"], c["column_name"]) for c in json.loads(state["state"])}
+    assert ("gold", "dim_customers", "email") in stored

@@ -198,7 +198,16 @@ class SchemaLog:
             raise ValueError(f"Unknown source {source!r}: expected one of {SOURCES}")
         self.ensure()
         current = self.capture()
-        changes = diff(self.previous(), current, ignore_missing_tables)
+        previous = self.previous()
+        changes = diff(previous, current, ignore_missing_tables)
+        state_columns = current
+        if ignore_missing_tables and previous:
+            # Keep the inherited (DEV) version of tables not built here, so the
+            # next step still compares each model with its DEV counterpart.
+            present = {(c.layer, c.table_name) for c in current}
+            state_columns = current + [
+                c for c in previous if (c.layer, c.table_name) not in present
+            ]
         if changes:
             # One job for all changes: rows travel as a JSON array parameter.
             payload = json.dumps(
@@ -233,7 +242,7 @@ class SchemaLog:
                 """,
                 params={"source": source, "payload": payload, **run_context()},
             )
-        state = json.dumps([c.__dict__ for c in current])
+        state = json.dumps([c.__dict__ for c in state_columns])
         self._executor.execute(
             f"""
             create or replace table `{self.state_table}`

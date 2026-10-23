@@ -780,6 +780,7 @@ flowchart LR
 | `... is older than the latest applied version`          | A new script has a version lower than one already applied   | Rename it to the next version, or deploy with `--out-of-order` |
 | `assert_no_bronze_schema_drift` fails                    | BRONZE and the dbt sources disagree                         | Open the run report's *Schema drift* table; declare or remove the column |
 | `assert_no_model_schema_drift` fails / monitor alert on SILVER or GOLD | A table was changed outside dbt, or a contract is stale | Rebuild the model (`dbt build --select <model>`) to revert, or make the change official in the model and its contract |
+| A contract type change does not reach DEV/PROD (e.g. `NUMERIC` → `NUMERIC(18, 2)` on `stg_ecommerce__orders`) | Incremental models keep the types of existing columns | Run **Deploy** with *Full refresh* once after merging; the schema history then records the change in DEV/PROD |
 | Monitor stays *Queued*                                   | Fixed: it used to share the deployment queue and waited behind a deployment pending approval | Each environment now has its own monitor queue |
 | `Not found: Table ...dev_audit...` while cloning (CI)   | A DEV deployment replaced audit tables while CI was copying them | Fixed: only stateful AUDIT tables are cloned and vanished tables are skipped; re-run the job |
 | `Access Denied: ... bigquery.jobs.create` (local)       | Application Default Credentials belong to another account    | `gcloud auth application-default login --project <project>` |

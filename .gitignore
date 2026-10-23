@@ -16,6 +16,8 @@ __pycache__/
 *credentials*.json
 service-account*.json
 application_default_credentials.json
+# Short-lived Workload Identity config written by google-github-actions/auth
+gha-creds-*.json
 *.p12
 *.pem
 keys/

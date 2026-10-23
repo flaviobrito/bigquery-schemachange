@@ -65,9 +65,12 @@ def history_section(rows: list[dict] | None) -> str:
                 (row.get("layer") or "").upper(),
                 row["table_name"],
                 f"`{row['column_name']}`",
-                row["change_type"].replace("_", " "),
-                row["old_data_type"],
-                row["new_data_type"],
+                (
+                    row["change_type"].replace("_", " ")
+                    + (f" ({row['property']})" if row.get("property") else "")
+                ),
+                _short(row.get("old_value", row.get("old_data_type"))),
+                _short(row.get("new_value", row.get("new_data_type"))),
                 row["source"],
                 f"#{row['pull_request']}" if row.get("pull_request") else "",
             ]
@@ -75,6 +78,11 @@ def history_section(rows: list[dict] | None) -> str:
         ),
     )
     return f"{title}\n\n{table}"
+
+
+def _short(value: object, limit: int = 60) -> object:
+    text = "" if value is None else str(value)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def migrations_section(rows: list[dict] | None) -> str:

@@ -13,3 +13,4 @@ project ID is masked by GitHub as `***`).
 | [Scenario 4: broken source data is blocked](dq-gate.md) | ❌ blocked | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39885807472) |
 | [Production deployment (after manual approval)](deploy-prod.md) | ✅ passed | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39883046028) |
 | [Scenario 5: a manual change in BigQuery is detected](scenario5-manual-change.md) | ❌ detected, ✅ after restore | [effect run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39940900977) |
+| [Metadata changes made by hand (descriptions, labels, clustering, options)](metadata-manual-changes.md) | ✅ detected | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/40014607084) |

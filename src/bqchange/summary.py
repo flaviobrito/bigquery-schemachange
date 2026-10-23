@@ -13,6 +13,7 @@ class SummaryRow:
     script_type: str
     reason: str
     outcome: str
+    diff: str | None = None
 
 
 def render_summary(title: str, environment: str, rows: list[SummaryRow]) -> str:
@@ -27,6 +28,19 @@ def render_summary(title: str, environment: str, rows: list[SummaryRow]) -> str:
             f"| `{row.script}` | {labels.get(row.script_type, row.script_type)} "
             f"| {row.reason} | {row.outcome} |"
         )
+    # What changed in each edited file, collapsed so the table stays readable.
+    for row in rows:
+        if row.diff:
+            lines += [
+                "",
+                f"<details><summary>View changes in <code>{row.script}</code></summary>",
+                "",
+                "```diff",
+                row.diff,
+                "```",
+                "",
+                "</details>",
+            ]
     return "\n".join(lines) + "\n"
 
 

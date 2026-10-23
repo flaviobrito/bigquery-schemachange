@@ -6,7 +6,7 @@ create table if not exists `{{ project }}.{{ env }}_bronze.customers` (
     first_name string,
     last_name string,
     email string,
-    phone string,
+    phone string options (description = 'Phone number as typed by the customer'),
     country_code string options (description = 'ISO 3166-1 alpha-2'),
     state string,
     city string,

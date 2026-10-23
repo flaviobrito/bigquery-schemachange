@@ -16,6 +16,7 @@ import argparse
 import json
 import logging
 import os
+import re
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
@@ -25,6 +26,10 @@ from ops.environment import client, current_environment, dataset_id
 logger = logging.getLogger(__name__)
 
 UNAVAILABLE = "⚠️ Not available: the query failed (see the step log)."
+# dbt colours unit test diffs; terminal escape codes are noise in Markdown.
+ANSI_ESCAPES = re.compile(r"\x1b\[[0-9;]*m")
+# dbt appends a 10-character hash to long generic test names.
+TEST_HASH = re.compile(r"\.[0-9a-f]{10}$")
 
 STATUS_ICONS = {
     "success": "✅",
@@ -125,9 +130,9 @@ def dbt_section(run_results: dict) -> str:
             (
                 [
                     f"{STATUS_ICONS.get(r['status'], '')} {r['status']}",
-                    f"`{r['unique_id'].split('.', 2)[-1]}`",
+                    f"`{TEST_HASH.sub('', r['unique_id'].split('.', 2)[-1])}`",
                     r.get("failures") or "",
-                    (r.get("message") or "")[:200],
+                    ANSI_ESCAPES.sub("", r.get("message") or "")[:200],
                 ]
                 for r in problems
             ),

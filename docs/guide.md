@@ -128,6 +128,51 @@ example, a column exists in BigQuery but nobody declared it in the dbt project.
 This project compares BigQuery's own catalogue (`INFORMATION_SCHEMA`) with the
 dbt declarations on every run and fails when they differ.
 
+### Who owns which table: migrations or dbt?
+
+A common question: *"dbt already creates a table for every `.sql` file, so why
+do we need migration scripts at all?"* Because there are two kinds of tables,
+with different owners:
+
+| | **Source tables** (BRONZE) | **Model tables** (SILVER, GOLD) |
+| --- | --- | --- |
+| Example | `dev_bronze.customers` | `dev_silver.stg_ecommerce__customers`, `dev_gold.fct_orders` |
+| Created by | **migrations** (`V1.1.0__create_bronze_tables.sql`) | **dbt**: one table per `.sql` file, named after the file |
+| Data comes from | outside (the store's exports, loaded by the loader) | a `select` over other tables |
+| Can it be rebuilt from scratch? | **No**: dropping it loses data that exists nowhere else | **Yes**: dbt drops and rebuilds it on every run |
+| How its structure changes | an incremental `alter table`, in a new migration | by editing the model's `select` |
+| In dbt it is a | `source` (declared in YAML, **read only**) | `model` (**built** by dbt) |
+| Change tracking | change history table + schema drift audit | Git history + contracts (GOLD) + tests |
+
+So migrations only manage what dbt must never rebuild. Managing model tables
+with migrations as well would give them two owners, and dbt would overwrite
+them anyway.
+
+What each migration creates, per environment:
+
+| Script | Creates | In DEV | In PROD | In pull request #1 |
+| --- | --- | --- | --- | --- |
+| *(bqchange itself, first run)* | dataset + history table | `dev_meta.change_history` | `prod_meta.change_history` | cloned from DEV |
+| `V1.0.0__create_medallion_datasets.sql` | 4 datasets (no tables) | `dev_bronze`, `dev_silver`, `dev_gold`, `dev_audit` | `prod_bronze`, … | `pr_1_bronze`, … |
+| `V1.1.0__create_bronze_tables.sql` | 5 tables | `dev_bronze.customers`, `.products`, `.orders`, `.order_items`, `.payments` | `prod_bronze.*` | `pr_1_bronze.*` |
+| `V1.2.0__add_customer_marketing_consent.sql` | 1 column | `dev_bronze.customers.marketing_opt_in` | same in PROD | |
+| `V1.3.0__create_load_log.sql` | 1 table | `dev_audit.load_log` | `prod_audit.load_log` | |
+| `R__shared_routines.sql` | 1 function | `dev_audit.is_valid_email` | `prod_audit.is_valid_email` | `pr_1_audit.is_valid_email` |
+| `R__audit_views.sql` | 2 views | `dev_audit.deployment_history`, `dev_audit.load_summary` | same in PROD | |
+
+Everything else (`stg_ecommerce__*`, `int_orders__*`, `dim_*`, `fct_*`,
+`agg_daily_revenue`, `audit_schema_snapshots`, `audit_schema_drift`) is created by dbt.
+
+![dbt lineage graph: sources on the left, SILVER in the middle, GOLD and tests on the right](images/dbt-lineage.png)
+
+*The dbt lineage graph. Green boxes on the left are the BRONZE **sources**
+(created by migrations); every blue box is a dbt **model** or **test**.*
+
+![dbt documentation page of fct_orders with its relation, row count and column types](images/dbt-fct-orders.png)
+
+*dbt documentation of `fct_orders`: a model table built by dbt, with the column
+types enforced by its contract (the project ID is replaced by `example-project`).*
+
 ### Git, pull requests and CI/CD
 
 - **Git** keeps the history of every file. **GitHub** hosts it.
@@ -295,15 +340,213 @@ yourself, and under **Deployment branches** allow only `main`.
 
 ## 5. The pipelines, one by one
 
-<!-- PIPELINES -->
+All workflows live in `.github/workflows`. Each card lists the trigger (when it
+runs), the input (what it reads) and the expected outcome.
+
+### 5.1 CI (`ci.yml`): checks every pull request
+
+```mermaid
+flowchart LR
+    A[Pull request opened<br/>or updated] --> B["Static checks<br/>(no cloud access)"]
+    B -->|pass| C[Clone DEV tables<br/>into pr_n datasets]
+    C --> D[bqchange plan<br/>then deploy]
+    D --> E["dbt build<br/>(changed models + schema audit)"]
+    E --> F[Run report]
+    B -->|fail| X[❌ PR blocked]
+    D -->|fail| X
+    E -->|fail| X
+    F --> OK[✅ PR can be merged]
+```
+
+| | |
+| --- | --- |
+| **Trigger** | A pull request to `main` is opened or receives a new commit |
+| **Input** | The files changed in the pull request; DEV's tables (cloned) and DEV's last dbt manifest |
+| **Static checks** | Python lint + 52 unit tests, SQL lint, `dbt parse`, every migration rendered |
+| **Integration** | Only the pull request's new migrations are applied to `pr_<n>`; dbt builds what changed (unchanged models are read from DEV) |
+| **Expected outcome** | ✅ green when everything passes; ❌ red with the reason in the report otherwise |
+| **Clean-up** | `pr-cleanup.yml` drops the `pr_<n>` datasets when the pull request is closed |
+
+### 5.2 Deploy (`deploy.yml`): DEV, then PROD with approval
+
+```mermaid
+sequenceDiagram
+    actor Owner
+    participant GH as GitHub Actions
+    participant DEV as BigQuery dev_*
+    participant PROD as BigQuery prod_*
+    Owner->>GH: merge to main (or Run workflow)
+    GH->>DEV: bqchange deploy · optional sample data · dbt build · report
+    GH-->>Owner: "Review pending deployments" (production)
+    Owner->>GH: Approve and deploy
+    GH->>PROD: bqchange plan + deploy · optional sample data · dbt build · docs · report
+```
+
+| | |
+| --- | --- |
+| **Trigger** | Push to `main` (merge), or **Actions → Deploy → Run workflow** |
+| **Options** | *Load sample data* (generate and load synthetic data), *Full refresh* (rebuild incremental models) |
+| **Input** | `migrations/`, `dbt/`, the `dev` and `prod` datasets |
+| **Expected outcome** | DEV updates automatically; PROD waits for the owner's approval, then updates; the dbt documentation is attached to the run as an artifact |
+
+The first production deployment applied every migration to an empty
+environment ([run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39883046028)):
+
+![First production deployment: all migrations applied, data loaded, 102 checks passed](images/report-deploy-prod.png)
+
+### 5.3 Data quality monitor (`monitor.yml`)
+
+| | |
+| --- | --- |
+| **Trigger** | Manual (**Actions → Data quality monitor → Run workflow**). In a real production setup it would run on a daily schedule |
+| **Input** | `prod_*` datasets |
+| **Steps** | Source freshness → refresh schema audit → report → schema drift alert (Slack/Teams if configured) → full test suite |
+| **Expected outcome** | ✅ when data is fresh, the schema matches and all tests pass; ❌ with a drift alert when someone changed BRONZE outside the pipeline |
+
+### 5.4 Data quality gate demo (`dq-gate-demo.yml`)
+
+| | |
+| --- | --- |
+| **Trigger** | Manual |
+| **Input** | A throwaway environment cloned from DEV, plus deliberately broken data |
+| **Expected outcome** | ❌ always: it exists to show the gate stopping bad data (see scenario 4). The throwaway environment is dropped at the end |
 
 ## 6. The quality gate in action: four blocked changes
 
-<!-- SCENARIOS -->
+A quality gate is only credible if you can watch it say **no**. Each scenario
+below was run for real in this repository. Full details, including the raw log
+lines, are in [docs/evidence](evidence/README.md).
+
+| # | Bad change | Stopped by | Result |
+| - | ---------- | ---------- | ------ |
+| 1 | New BRONZE column not declared in dbt | Schema drift audit | [PR #1](https://github.com/flaviobrito/bigquery-schemachange/pull/1): ❌ then ✅ after the fix |
+| 2 | Revenue formula forgets shipping | Unit test | [PR #2](https://github.com/flaviobrito/bigquery-schemachange/pull/2): ❌ |
+| 3 | Editing an applied migration | bqchange immutability rule | [PR #3](https://github.com/flaviobrito/bigquery-schemachange/pull/3): ❌ |
+| 4 | Broken data arrives | SILVER data tests | [Run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39885807472): ❌ |
+
+### Scenario 1: a new column nobody declared
+
+**Story.** The store starts exporting a loyalty tier. A developer adds the
+migration but forgets to tell dbt about the new column.
+
+**Input:** `migrations/scripts/versioned/V1.4.0__add_customer_loyalty_tier.sql`
+
+```sql
+alter table `{{ project }}.{{ env }}_bronze.customers`
+add column if not exists loyalty_tier string
+options (description = 'Loyalty program tier: bronze | silver | gold');
+```
+
+**Expected outcome:** only `V1.4.0` is applied in `pr_1`; the drift audit lists
+`customers.loyalty_tier` as `undeclared_in_dbt`; the test
+`assert_no_bronze_schema_drift` fails; the pull request is red.
+
+**Actual outcome:** exactly that. Note how the report shows the schema change
+itself: `V1.4.0` in the change history and `loyalty_tier` as the newest BRONZE column.
+
+![Scenario 1a report: V1.4.0 applied, loyalty_tier undeclared, drift test failed](images/report-pr1-blocked.png)
+
+**The fix:** declare the column in `dbt/models/silver/ecommerce/_ecommerce__sources.yml`
+(with a test for its allowed values) and push again. The pull request turns green:
+
+![Scenario 1b report: same migration, column declared, drift aligned, all checks passed](images/report-pr1-fixed.png)
+
+### Scenario 2: a wrong business rule
+
+**Story.** Someone decides shipping should not count in the order total and
+edits `dbt/models/gold/core/fct_orders.sql`.
+
+**Input:**
+
+```diff
+-        coalesce(items.items_amount, 0)
+-        - orders.discount_amount
+-        + orders.shipping_amount as order_total,
++        -- Simplify the total: shipping is billed separately.
++        coalesce(items.items_amount, 0)
++        - orders.discount_amount as order_total,
+```
+
+**Expected outcome:** the unit test feeds two known orders into the model and
+compares the result with the documented rule
+`order_total = items - discount + shipping`; it fails before any table is
+built, and the 24 models and tests that depend on `fct_orders` are skipped.
+
+**Actual outcome:**
+
+![Scenario 2 report: unit test test_fct_orders_totals_and_revenue_flag failed, dependents skipped](images/report-pr2-blocked.png)
+
+### Scenario 3: rewriting history
+
+**Story.** A developer adds a column description directly inside
+`V1.1.0__create_bronze_tables.sql`, a migration that DEV and PROD already ran.
+
+**Expected outcome:** bqchange compares the file's fingerprint (checksum) with
+the one recorded when it was applied, refuses to continue and explains the
+right way: a new version.
+
+**Actual outcome:**
+
+![Scenario 3 report: bqchange stops with "Versioned scripts are immutable"](images/report-pr3-blocked.png)
+
+> Why so strict? DEV and PROD already contain the old version. Editing the file
+> would make Git and the databases disagree silently; a new migration keeps
+> every environment reproducible.
+
+### Scenario 4: bad data arrives
+
+**Story.** The store's export contains problems: invalid emails, an order for a
+customer who does not exist, a negative price and an unknown order status.
+
+**Input:** `uv run python -m ops.generate_sample_data --inject-anomalies`,
+loaded into a throwaway copy of DEV by `dq-gate-demo.yml`.
+
+**Expected outcome:**
+
+| Layer | Check | Severity | What happens |
+| ----- | ----- | -------- | ------------ |
+| BRONZE | invalid email, unknown status, orphan order, duplicates | `warn` | reported, the raw data is kept |
+| SILVER | negative price, unknown status, order without customer | `error` | the pipeline **stops** |
+| GOLD | — | — | models are **skipped**: bad data never reaches them |
+
+**Actual outcome:** 8 warnings, 3 errors, 29 GOLD nodes skipped, environment dropped.
+
+![Scenario 4 report: 8 warnings in BRONZE, 3 failures in SILVER, 29 nodes skipped](images/report-dq-gate.png)
 
 ## 7. Reading the run reports
 
-<!-- REPORTS -->
+Every integration, deploy and monitor run ends with a **Schema and data quality
+report**, written to the run's *Summary* page (visible to signed-in GitHub users;
+the same text is printed in the step log). It has four parts:
+
+| Section | Answers | Source |
+| ------- | ------- | ------ |
+| **Schema migrations** | Which structural changes were applied, when, and how long they took? | `<env>_audit.deployment_history` (view over the change history) |
+| **BRONZE schema: most recent columns** | What does the source data look like now, and which columns are new or were dropped? | `<env>_audit.audit_schema_snapshots` |
+| **Schema drift** | Do BigQuery and the dbt declarations agree? | `<env>_audit.audit_schema_drift` |
+| **dbt** | How many checks passed, warned or failed, and which ones? | `dbt/target/run_results.json` |
+
+How to read the icons:
+
+| Icon | Meaning |
+| ---- | ------- |
+| ✅ | passed |
+| ⚠️ | warning: reported, did not stop the pipeline |
+| ❌ | failed: stopped the pipeline |
+| ⏭️ | skipped because something it depends on failed |
+| ⏳ (plan only) | cannot be validated yet because an earlier pending migration creates what it needs |
+
+> A section that says **"⚠️ Not available"** means the query behind it failed.
+> It is never shown as ✅: an unverified check is not a passed check.
+
+The same information is queryable in BigQuery at any time:
+
+```sql
+select * from `<project>.prod_audit.deployment_history`;   -- migrations applied
+select * from `<project>.prod_audit.audit_schema_drift`
+where drift_status != 'aligned';                          -- current drift
+select * from `<project>.prod_audit.load_summary`;          -- data loaded per day
+```
 
 ## 8. Day-to-day workflow
 

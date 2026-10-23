@@ -16,6 +16,10 @@ Google BigQuery**, using the same approach as
   pull request, gated DEV → PROD deployments and an on-demand data quality
   monitor. Every run publishes a report of schema changes and test results.
 
+> **New to these tools?** Read the [complete guide](docs/guide.md): concepts,
+> diagrams, setup with expected outcomes, and screenshots of the quality gate
+> blocking real changes. Run-by-run proof is in [docs/evidence](docs/evidence/README.md).
+
 Authentication uses **Workload Identity Federation**: no service account key
 exists anywhere. Python tooling is managed with [uv](https://docs.astral.sh/uv/).
 

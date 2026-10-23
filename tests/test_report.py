@@ -66,3 +66,19 @@ def test_failed_queries_are_never_reported_as_success():
     for section in (drift_section(None), migrations_section(None), schema_section(None)):
         assert "⚠️ Not available" in section
         assert "✅" not in section
+
+
+def test_dbt_messages_are_stripped_of_terminal_colours():
+    section = dbt_section(
+        {
+            "results": [
+                {
+                    "status": "fail",
+                    "unique_id": "unit_test.ecommerce.x.y",
+                    "message": "\x1b[32mactual\x1b[0m differs from \x1b[31mexpected\x1b[0m",
+                }
+            ]
+        }
+    )
+    assert "actual differs from expected" in section
+    assert "\x1b" not in section

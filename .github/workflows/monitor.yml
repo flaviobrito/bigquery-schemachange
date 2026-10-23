@@ -12,8 +12,9 @@ on:
         options: [prod, dev]
         default: prod
 
+# Own queue per environment: a deployment waiting for approval must not block monitoring.
 concurrency:
-  group: deploy
+  group: monitor-${{ inputs.environment || 'prod' }}
   cancel-in-progress: false
 
 permissions:

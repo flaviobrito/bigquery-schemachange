@@ -68,6 +68,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+      pull-requests: write
     env:
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
       BQ_ENV: pr_${{ github.event.pull_request.number }}
@@ -128,6 +129,15 @@ jobs:
 
       - name: Record schema changes made by dbt
         run: uv run bqchange record-schema --source dbt --ignore-missing-tables
+
+      # Shows the schema changes of this pull request in its conversation tab.
+      - name: Comment schema changes on the pull request
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: uv run python -m ops.schema_comment --title "Schema changes in this pull request"
 
       - name: Schema and data quality report
         if: always()

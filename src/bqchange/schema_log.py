@@ -42,6 +42,9 @@ class ChangeType(StrEnum):
 
 # column_name used for table-level properties.
 TABLE_LEVEL = "(table)"
+# Options whose value is environment-specific and changes on every rebuild
+# (an absolute timestamp set by dataset defaults), so they are not schema decisions.
+IGNORED_OPTIONS = ("expiration_timestamp",)
 
 
 @dataclass(frozen=True, order=True)
@@ -275,18 +278,22 @@ class SchemaLog:
         for layer, dataset in self._layers.items():
             schema = f"`{self._project}.{dataset}.INFORMATION_SCHEMA"
             not_transient = r"not regexp_contains(table_name, r'__dbt_(tmp|backup)')"
+            ignored_options = ", ".join(f"'{name}'" for name in IGNORED_OPTIONS)
             try:
                 rows = self._executor.query(
                     f"""
                     -- bqchange: table and column properties
                     select table_name, '{TABLE_LEVEL}' as column_name,
-                        'table_type' as property, table_type as value
+                        'table_type' as property,
+                        -- A zero-copy clone (pull request environments) is still a table.
+                        if(table_type = 'CLONE', 'BASE TABLE', table_type) as value
                     from {schema}.TABLES`
                     where {not_transient}
                     union all
                     select table_name, '{TABLE_LEVEL}', concat('option:', option_name), option_value
                     from {schema}.TABLE_OPTIONS`
                     where {not_transient}
+                        and option_name not in ({ignored_options})
                     union all
                     select table_name, '{TABLE_LEVEL}', 'partitioning', column_name
                     from {schema}.COLUMNS`

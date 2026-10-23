@@ -286,3 +286,12 @@ def test_summary_shows_property_changes():
         "| GOLD | dim_customers | `email` | property changed | description | Raw email | PII |"
         in table
     )
+
+
+def test_property_capture_ignores_volatile_options_and_clone_type():
+    executor = FakeExecutor(None, [])
+    executor.query = lambda sql: executor.statements.append((sql, None)) or []
+    SchemaLog(executor, "p", "pr_7_meta", {"bronze": "pr_7_bronze"}).capture_properties()
+    sql = next(q for q, _ in executor.statements if "table and column properties" in q)
+    assert "option_name not in ('expiration_timestamp')" in sql
+    assert "if(table_type = 'CLONE', 'BASE TABLE', table_type)" in sql

@@ -23,7 +23,7 @@ concurrency:
 permissions:
   contents: read
   id-token: write
-  pull-requests: read
+  pull-requests: write
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -81,6 +81,12 @@ jobs:
 
       - name: Record schema changes made by dbt
         run: uv run bqchange record-schema --source dbt
+
+      - name: Comment deployed schema changes on the pull request
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python -m ops.schema_comment --title "Deployed to DEV"
 
       - name: Schema and data quality report
         if: always()
@@ -145,6 +151,12 @@ jobs:
 
       - name: Record schema changes made by dbt
         run: uv run bqchange record-schema --source dbt
+
+      - name: Comment deployed schema changes on the pull request
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python -m ops.schema_comment --title "Deployed to PROD"
 
       - name: Schema and data quality report
         if: always()

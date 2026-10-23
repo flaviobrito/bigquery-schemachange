@@ -27,7 +27,7 @@ from `{{ project }}.{{ env }}_audit.load_log`
 group by table_name, load_date;
 
 create or replace view `{{ project }}.{{ env }}_audit.schema_history`
-options (description = 'Column-level schema changes of every layer, newest first, with their source.')
+options (description = 'Schema changes (columns and table/column properties) of every monitored dataset, newest first, with their source.')
 as
 select
     changed_at,
@@ -35,6 +35,9 @@ select
     table_name,
     column_name,
     change_type,
+    property,
+    coalesce(old_data_type, old_value) as old_value,
+    coalesce(new_data_type, new_value) as new_value,
     old_data_type,
     new_data_type,
     source,

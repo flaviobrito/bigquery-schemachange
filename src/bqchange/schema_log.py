@@ -1,10 +1,17 @@
-"""Schema change log: records how the structure of every layer evolves.
+"""Schema change log: records how the structure of every monitored dataset evolves.
 
-Migrations own BRONZE and are recorded in the change history table. dbt owns
-SILVER and GOLD and rebuilds them, so there is no script to record. Instead,
-after each step of a deployment, bqchange takes a snapshot of the columns of
-the monitored datasets, compares it with the previous snapshot and writes one
-event per added, removed or retyped column, attributed to its source:
+The change history table records what bqchange *applied*. This log records what
+bqchange *observes* in BigQuery's catalog, for every table and view of the
+monitored datasets, whoever created it (migrations, dbt or a person). After
+each step of a deployment it snapshots the monitored datasets, compares the
+snapshot with the previous one and writes one event per change:
+
+    columns     added, removed, type changed
+    properties  partitioning, clustering, table type, table options
+                (description, labels, expiration...) and column descriptions,
+                for tables that exist in both snapshots
+
+Each event is attributed to its source:
 
     migration   changes made by bqchange scripts
     dbt         changes made by dbt models
@@ -28,6 +35,16 @@ class ChangeType(StrEnum):
     REMOVED = "removed"
     TYPE_CHANGED = "type_changed"
     BASELINE = "baseline"
+    PROPERTY_ADDED = "property_added"
+    PROPERTY_REMOVED = "property_removed"
+    PROPERTY_CHANGED = "property_changed"
+
+
+# column_name used for table-level properties.
+TABLE_LEVEL = "(table)"
+# Options whose value is environment-specific and changes on every rebuild
+# (an absolute timestamp set by dataset defaults), so they are not schema decisions.
+IGNORED_OPTIONS = ("expiration_timestamp",)
 
 
 @dataclass(frozen=True, order=True)
@@ -44,6 +61,21 @@ class ColumnState:
         return (self.layer, self.table_name, self.column_name)
 
 
+@dataclass(frozen=True, order=True)
+class PropertyState:
+    """A table or column property: partitioning, clustering, options, descriptions."""
+
+    layer: str
+    table_name: str
+    column_name: str
+    property: str
+    value: str | None
+
+    @property
+    def key(self) -> tuple[str, str, str, str]:
+        return (self.layer, self.table_name, self.column_name, self.property)
+
+
 @dataclass(frozen=True)
 class SchemaChange:
     change_type: ChangeType
@@ -52,6 +84,9 @@ class SchemaChange:
     column_name: str
     old_data_type: str | None
     new_data_type: str | None
+    property: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
 
 
 def diff(
@@ -94,6 +129,54 @@ def diff(
     return changes
 
 
+def diff_properties(
+    previous: list[PropertyState] | None,
+    current: list[PropertyState],
+    ignore_missing_tables: bool = False,
+) -> list[SchemaChange]:
+    """Property changes of tables present in both snapshots.
+
+    The first snapshot only establishes the state. Properties of tables that were
+    created or dropped are not listed: the column changes already describe those.
+    """
+    if previous is None:
+        return []
+    before_tables = {(p.layer, p.table_name) for p in previous}
+    after_tables = {(p.layer, p.table_name) for p in current}
+    if ignore_missing_tables:
+        before_tables &= after_tables
+    common = before_tables & after_tables
+    before = {p.key: p for p in previous if (p.layer, p.table_name) in common}
+    after = {p.key: p for p in current if (p.layer, p.table_name) in common}
+    changes = []
+    for key in sorted(before.keys() | after.keys()):
+        old, new = before.get(key), after.get(key)
+        if old and new and old.value == new.value:
+            continue
+        change_type = (
+            ChangeType.PROPERTY_ADDED
+            if old is None
+            else ChangeType.PROPERTY_REMOVED
+            if new is None
+            else ChangeType.PROPERTY_CHANGED
+        )
+        layer, table_name, column_name, prop = key
+        changes.append(
+            SchemaChange(
+                change_type,
+                layer,
+                table_name,
+                column_name,
+                None,
+                None,
+                prop,
+                old.value if old else None,
+                new.value if new else None,
+            )
+        )
+    return changes
+
+
 def legacy_layer_of(dataset: str) -> str:
     """Layer of a dataset name in states written before explicit layer maps."""
     return dataset.rsplit("_", 1)[-1]
@@ -133,6 +216,10 @@ class SchemaLog:
     def state_table(self) -> str:
         return f"{self._meta}.schema_state"
 
+    @property
+    def property_state_table(self) -> str:
+        return f"{self._meta}.schema_state_properties"
+
     def ensure(self) -> None:
         self._executor.ensure_dataset(self._meta)
         self._executor.execute(
@@ -157,6 +244,14 @@ class SchemaLog:
             options (description = 'Column-level schema changes of every layer, by source.')
             """
         )
+        self._executor.execute(
+            f"""
+            alter table `{self.log_table}`
+            add column if not exists property string,
+            add column if not exists old_value string,
+            add column if not exists new_value string
+            """
+        )
 
     def capture(self) -> list[ColumnState]:
         """Columns of every monitored dataset that exists (a fresh environment has none)."""
@@ -176,6 +271,59 @@ class SchemaLog:
                 continue
             columns += [ColumnState(layer=layer, **row) for row in rows]
         return columns
+
+    def capture_properties(self) -> list[PropertyState]:
+        """Table and column properties of every monitored dataset that exists."""
+        properties: list[PropertyState] = []
+        for layer, dataset in self._layers.items():
+            schema = f"`{self._project}.{dataset}.INFORMATION_SCHEMA"
+            not_transient = r"not regexp_contains(table_name, r'__dbt_(tmp|backup)')"
+            ignored_options = ", ".join(f"'{name}'" for name in IGNORED_OPTIONS)
+            try:
+                rows = self._executor.query(
+                    f"""
+                    -- bqchange: table and column properties
+                    select table_name, '{TABLE_LEVEL}' as column_name,
+                        'table_type' as property,
+                        -- A zero-copy clone (pull request environments) is still a table.
+                        if(table_type = 'CLONE', 'BASE TABLE', table_type) as value
+                    from {schema}.TABLES`
+                    where {not_transient}
+                    union all
+                    select table_name, '{TABLE_LEVEL}', concat('option:', option_name), option_value
+                    from {schema}.TABLE_OPTIONS`
+                    where {not_transient}
+                        and option_name not in ({ignored_options})
+                    union all
+                    select table_name, '{TABLE_LEVEL}', 'partitioning', column_name
+                    from {schema}.COLUMNS`
+                    where is_partitioning_column = 'YES' and {not_transient}
+                    union all
+                    select table_name, '{TABLE_LEVEL}', 'clustering',
+                        string_agg(column_name, ', ' order by clustering_ordinal_position)
+                    from {schema}.COLUMNS`
+                    where clustering_ordinal_position is not null and {not_transient}
+                    group by table_name
+                    union all
+                    select table_name, column_name, 'description', description
+                    from {schema}.COLUMN_FIELD_PATHS`
+                    where field_path = column_name and description is not null
+                        and {not_transient}
+                    """
+                )
+            except Exception as error:
+                if "Not found" not in str(error):
+                    raise
+                continue
+            properties += [PropertyState(layer=layer, **row) for row in rows]
+        return properties
+
+    def previous_properties(self) -> list[PropertyState] | None:
+        try:
+            rows = self._executor.query(f"select * from `{self.property_state_table}`")
+        except Exception:
+            return None
+        return [PropertyState(**row) for row in rows]
 
     def previous(self) -> list[ColumnState] | None:
         try:
@@ -202,14 +350,21 @@ class SchemaLog:
         self.ensure()
         current = self.capture()
         previous = self.previous()
-        changes = diff(previous, current, ignore_missing_tables)
-        state_columns = current
-        if ignore_missing_tables and previous:
+        current_properties = self.capture_properties()
+        previous_properties = self.previous_properties()
+        changes = diff(previous, current, ignore_missing_tables) + diff_properties(
+            previous_properties, current_properties, ignore_missing_tables
+        )
+        state_columns, state_properties = current, current_properties
+        if ignore_missing_tables:
             # Keep the inherited (DEV) version of tables not built here, so the
             # next step still compares each model with its DEV counterpart.
             present = {(c.layer, c.table_name) for c in current}
             state_columns = current + [
-                c for c in previous if (c.layer, c.table_name) not in present
+                c for c in previous or [] if (c.layer, c.table_name) not in present
+            ]
+            state_properties = current_properties + [
+                p for p in previous_properties or [] if (p.layer, p.table_name) not in present
             ]
         if changes:
             # One job for all changes: rows travel as a JSON array parameter.
@@ -223,13 +378,20 @@ class SchemaLog:
                         "column_name": c.column_name,
                         "old_data_type": c.old_data_type,
                         "new_data_type": c.new_data_type,
+                        "property": c.property,
+                        "old_value": c.old_value,
+                        "new_value": c.new_value,
                     }
                     for c in changes
                 ]
             )
             self._executor.execute(
                 f"""
-                insert into `{self.log_table}`
+                insert into `{self.log_table}` (
+                    changed_at, source, change_type, layer, dataset, table_name,
+                    column_name, old_data_type, new_data_type, git_sha, pull_request,
+                    workflow, run_url, actor, property, old_value, new_value
+                )
                 select
                     current_timestamp(),
                     @source,
@@ -240,7 +402,10 @@ class SchemaLog:
                     json_value(item, '$.column_name'),
                     json_value(item, '$.old_data_type'),
                     json_value(item, '$.new_data_type'),
-                    @git_sha, @pull_request, @workflow, @run_url, @actor
+                    @git_sha, @pull_request, @workflow, @run_url, @actor,
+                    json_value(item, '$.property'),
+                    json_value(item, '$.old_value'),
+                    json_value(item, '$.new_value')
                 from unnest(json_query_array(@payload)) as item
                 """,
                 params={"source": source, "payload": payload, **run_context()},
@@ -259,5 +424,20 @@ class SchemaLog:
             from unnest(json_query_array(@state)) as item
             """,
             params={"state": state},
+        )
+        self._executor.execute(
+            f"""
+            create or replace table `{self.property_state_table}`
+            options (description = 'Latest property snapshot used by the schema change log.')
+            as
+            select
+                json_value(item, '$.layer') as layer,
+                json_value(item, '$.table_name') as table_name,
+                json_value(item, '$.column_name') as column_name,
+                json_value(item, '$.property') as property,
+                json_value(item, '$.value') as value
+            from unnest(json_query_array(@state)) as item
+            """,
+            params={"state": json.dumps([p.__dict__ for p in state_properties])},
         )
         return changes

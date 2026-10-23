@@ -86,11 +86,13 @@ pull request.
 
 ## 7. Schema history
 
-Every structural change of BRONZE, SILVER and GOLD is logged with its source:
+Every structural change of every table in the monitored datasets (columns and
+table/column properties such as partitioning, clustering, options and
+descriptions) is logged with its source:
 
 ```sql
-select changed_at, layer, table_name, column_name, change_type,
-       old_data_type, new_data_type, source, pull_request, run_url
+select changed_at, layer, table_name, column_name, change_type, property,
+       old_value, new_value, source, pull_request, run_url
 from `<project>.prod_audit.schema_history`
 order by changed_at desc;
 ```

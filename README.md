@@ -238,6 +238,56 @@ uv run bqchange deploy             # apply and record in <env>_meta.change_histo
 The full rule set is in [docs/bqchange.md](docs/bqchange.md); a hands-on walk-through
 is the [15-minute quickstart](docs/quickstart.md).
 
+## What bqchange tracks: applied vs observed
+
+bqchange keeps **two different records**. Mixing them up is the most common
+misunderstanding, so here they are side by side:
+
+| | **Applied** changes | **Observed** changes |
+| --- | --- | --- |
+| Command | `bqchange deploy` | `bqchange record-schema --source manual\|migration\|dbt` |
+| Question it answers | "Which scripts did bqchange run, when, and by whom?" | "What does every table look like now, and what changed since last time, whoever changed it?" |
+| Scope | Only the scripts in `migrations/` | **Every table and view** of the monitored datasets: tables created by migrations, by dbt, or by hand |
+| How | Records each script it executes | Reads BigQuery's own catalog (`INFORMATION_SCHEMA`) and compares snapshots |
+| Stored in | `<env>_meta.change_history` | `<env>_meta.schema_change_log` (timeline view: `<env>_audit.schema_history`) |
+
+So the monitoring is **not limited to migrations**. A dbt model that gains a
+column, or a table someone creates in the console, is recorded exactly like a
+migration, with its source:
+
+| Source | Meaning |
+| --- | --- |
+| `migration` | changed by a bqchange script (recorded right after `deploy`) |
+| `dbt` | changed by a dbt model (recorded right after `dbt build`) |
+| `manual` | changed outside the pipeline (found before a deployment, or by the monitor) |
+
+### What is detected
+
+| Level | Changes detected |
+| --- | --- |
+| Table | created, dropped; table type (table / view); **partitioning**; **clustering**; **options**: description, labels, expiration, `require_partition_filter`… |
+| Column | added, removed, **type changed** (including precision such as `NUMERIC(18, 2)`); **description** changed |
+
+![Monitor run: two manual metadata changes on BRONZE customers, table description and column description](docs/images/metadata-changes-summary.jpg)
+
+*A monitor run on DEV after someone edited, in the BigQuery console, the
+description of `customers` and of its `email` column: both are reported with the
+old and new value and the source `manual`.*
+
+![Schema change history with manual, migration and dbt sources in one timeline](docs/images/schema-history-all-sources.jpg)
+
+*The accumulated history of the environment: manual metadata changes, a column
+added by a migration in pull request #1, and a new dbt model version, in one timeline.*
+
+### What is not covered
+
+| Not monitored | Why / how to include it |
+| --- | --- |
+| Datasets not declared in `layers` / `schema-log-layers` (here: `<env>_audit`, `<env>_meta`, `billing_export`, anything else in the project) | Only the monitored datasets are snapshotted. Add a dataset to `layers` and `schema-log-layers` to watch it, even one no tool manages |
+| Data (row values, counts) | Schema only; data is covered by the [data quality tests](#data-quality) |
+| Other GCP projects | One configuration watches one project |
+| Properties of a table at the moment it is created or dropped | The table creation/removal itself is recorded through its columns; property changes are tracked from then on |
+
 ## Data quality
 
 Checks run in layers. See [docs/data-quality.md](docs/data-quality.md) for the full catalogue.
@@ -253,8 +303,9 @@ Checks run in layers. See [docs/data-quality.md](docs/data-quality.md) for the f
    versus dbt sources and model contracts, with history in `audit_schema_snapshots`
    and Slack/Teams alerts. Manual changes in BigQuery are reported before dbt overwrites them.
 7. **Schema history for every layer**: `bqchange record-schema` logs each added,
-   removed or retyped column of BRONZE, SILVER and GOLD with its source
-   (migration, dbt or manual), commit and pull request (`<env>_audit.schema_history`).
+   removed or retyped column and each changed table/column property (partitioning,
+   clustering, options, descriptions) of every table in the monitored datasets, with its
+   source (migration, dbt or manual), commit and pull request ([details](#what-bqchange-tracks-applied-vs-observed)).
 8. **Versioned GOLD models** for breaking changes: `dim_customers` v1 (deprecated,
    still at `dim_customers`) and v2 (`dim_customers_v2`, without the raw email).
 

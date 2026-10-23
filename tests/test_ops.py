@@ -100,3 +100,34 @@ def test_clone_selection(layer, table_id, table_type, expected):
     from ops.manage_environment import should_clone
 
     assert should_clone(layer, table_id, table_type) is expected
+
+
+def test_schema_comment_has_a_stable_marker_and_lists_changes():
+    from ops.schema_comment import build_comment
+
+    body = build_comment(
+        "Schema changes in this pull request",
+        "pr_7",
+        [
+            {
+                "source": "dbt",
+                "change_type": "property_changed",
+                "layer": "gold",
+                "table_name": "fct_orders",
+                "column_name": "(table)",
+                "property": "clustering",
+                "old_value": "customer_id",
+                "new_value": "customer_id, order_date",
+            }
+        ],
+        "https://github.com/o/r/actions/runs/1",
+    )
+    assert body.startswith("<!-- bqchange-schema-changes:pr_7 -->")
+    assert "| dbt | GOLD | fct_orders | `(table)` | property changed (clustering) |" in body
+    assert "[this run](https://github.com/o/r/actions/runs/1)" in body
+
+
+def test_schema_comment_without_changes():
+    from ops.schema_comment import build_comment
+
+    assert "No schema change." in build_comment("Deployed to PROD", "prod", [], None)

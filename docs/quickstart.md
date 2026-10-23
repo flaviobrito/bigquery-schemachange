@@ -347,7 +347,7 @@ Every structural change, in every layer, with **who** made it:
 
 ```sql
 select changed_at, source, change_type, layer, table_name, column_name, new_data_type
-from `<project>.quickstart_meta.schema_change_log`
+from `<project>.quickstart_meta.schema_change_log`   -- also has property, old_value, new_value
 where change_type != 'baseline'
 order by changed_at;
 ```
@@ -360,9 +360,17 @@ order by changed_at;
 | dbt | added | analytics | orders_daily | order_date | DATE |
 | dbt | added | analytics | orders_daily | revenue | NUMERIC |
 
+This log is **not limited to your migrations**: it covers every table and view
+of the datasets in `schema-log-layers`, whoever created them. Besides columns it
+tracks table and column **properties**: partitioning, clustering, table options
+(description, labels, expiration…) and column descriptions.
+
 Sources: `migration` (bqchange scripts), `dbt` (models) and `manual`: run
 `record-schema --source manual` **before** a deployment and anything changed by
-hand in the BigQuery console shows up with that label.
+hand in the BigQuery console shows up with that label. For example, after editing
+a table description in the console:
+
+![Manual metadata changes reported with before and after values](images/metadata-changes-summary.jpg)
 
 🎉 **Done.** You have versioned migrations, a dbt model under contract, and a
 complete schema history.

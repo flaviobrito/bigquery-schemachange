@@ -58,18 +58,35 @@ def render_schema_changes(source: str, environment: str, changes: list) -> str:
         return f"{title}\n\nNo schema change.\n"
     if all(c.change_type.value == "baseline" for c in changes):
         return f"{title}\n\nBaseline snapshot of {len(changes)} columns recorded.\n"
-    labels = {"added": "added", "removed": "removed", "type_changed": "type changed"}
+    labels = {
+        "added": "added",
+        "removed": "removed",
+        "type_changed": "type changed",
+        "property_added": "property added",
+        "property_removed": "property removed",
+        "property_changed": "property changed",
+    }
     lines = [
         title,
         "",
-        "| Layer | Table | Column | Change | Before | After |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Layer | Table | Column | Change | Property | Before | After |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for c in changes:
         layer = c.layer.upper()
         change = labels.get(c.change_type.value, c.change_type.value)
+        before = c.old_value if c.property else c.old_data_type
+        after = c.new_value if c.property else c.new_data_type
         lines.append(
-            f"| {layer} | {c.table_name} | `{c.column_name}` | {change} "
-            f"| {c.old_data_type or ''} | {c.new_data_type or ''} |"
+            f"| {layer} | {c.table_name} | `{c.column_name}` | {change} | {c.property or ''} "
+            f"| {_cell(before)} | {_cell(after)} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def _cell(value: str | None, limit: int = 80) -> str:
+    """Short, table-safe rendering of a property value."""
+    if value is None:
+        return ""
+    text = value.replace("|", "\\|").replace("\n", " ")
+    return text if len(text) <= limit else text[: limit - 1] + "…"

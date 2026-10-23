@@ -4,8 +4,8 @@ This guide explains **what this project does, why, and how to run it**, step by
 step. Every step lists what you do (**input**) and what you should see
 (**expected outcome**), with screenshots of real runs.
 
-> If you only want the commands, see the [README](../README.md). This document
-> is for understanding.
+> If you only want the commands, see the [README](../README.md) or the
+> [15-minute quickstart](quickstart.md). This document is for understanding.
 
 **Contents**
 

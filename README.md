@@ -16,6 +16,9 @@ Google BigQuery**, using the same approach as
   pull request, gated DEV → PROD deployments and an on-demand data quality
   monitor. Every run publishes a report of schema changes and test results.
 
+> **In a hurry?** Follow the [15-minute quickstart](docs/quickstart.md): install
+> bqchange, deploy your first migrations, add a dbt model and see the schema history.
+>
 > **New to these tools?** Read the [complete guide](docs/guide.md): concepts,
 > diagrams, setup with expected outcomes, and screenshots of the quality gate
 > blocking real changes. Run-by-run proof is in [docs/evidence](docs/evidence/README.md).

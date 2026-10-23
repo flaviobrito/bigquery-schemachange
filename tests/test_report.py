@@ -83,3 +83,37 @@ def test_dbt_messages_are_stripped_of_terminal_colours():
     )
     assert "actual differs from expected" in section
     assert "\x1b" not in section
+
+
+def test_history_section_shows_source_and_pull_request():
+    from ops.report import history_section
+
+    section = history_section(
+        [
+            {
+                "changed_at": WHEN,
+                "layer": "gold",
+                "table_name": "dim_customers",
+                "column_name": "manual_note",
+                "change_type": "added",
+                "old_data_type": None,
+                "new_data_type": "STRING",
+                "source": "manual",
+                "pull_request": None,
+            },
+            {
+                "changed_at": WHEN,
+                "layer": "bronze",
+                "table_name": "customers",
+                "column_name": "loyalty_tier",
+                "change_type": "added",
+                "old_data_type": None,
+                "new_data_type": "STRING",
+                "source": "migration",
+                "pull_request": "1",
+            },
+        ]
+    )
+    assert "| GOLD | dim_customers | `manual_note` | added |  | STRING | manual |  |" in section
+    assert "| migration | #1 |" in section
+    assert "⚠️" in history_section(None)

@@ -84,7 +84,21 @@ pull request.
 | `missing_in_database` | Declared in sources but not in BigQuery       | Add the migration, or remove the declaration |
 | `type_mismatch`       | Types differ                                  | Align the declaration or migrate the column |
 
-## 7. Cost controls
+## 7. Schema history
+
+Every structural change of BRONZE, SILVER and GOLD is logged with its source:
+
+```sql
+select changed_at, layer, table_name, column_name, change_type,
+       old_data_type, new_data_type, source, pull_request, run_url
+from `<project>.prod_audit.schema_history`
+order by changed_at desc;
+```
+
+`source = 'manual'` means the change was made outside the pipeline; follow up
+with the schema drift section above.
+
+## 8. Cost controls
 
 - `maximum_bytes_billed` of 1 GiB per job in bqchange and dbt.
 - BRONZE tables are partitioned by load date and clustered by key.

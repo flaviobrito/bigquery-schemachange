@@ -2,12 +2,13 @@
 
 Sections:
     migrations  latest versioned/repeatable rows of <env>_audit.deployment_history
+    history     column-level changes of every layer from <env>_audit.schema_history
     schema      newest columns of every layer from <env>_audit.audit_schema_snapshots
     drift       non-aligned rows of <env>_audit.audit_schema_drift (all layers)
     dbt         results of the last dbt invocation (dbt/target/run_results.json)
 
 Example:
-    python -m ops.report --sections migrations,schema,drift,dbt
+    python -m ops.report --sections migrations,history,drift,dbt
 """
 
 from __future__ import annotations
@@ -48,6 +49,32 @@ def markdown_table(headers: list[str], rows: Iterable[Iterable[object]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     lines += ["| " + " | ".join(cell(value) for value in row) + " |" for row in rows]
     return "\n".join(lines)
+
+
+def history_section(rows: list[dict] | None) -> str:
+    title = "#### Schema change history (all layers)"
+    if rows is None:
+        return f"{title}\n\n{UNAVAILABLE}"
+    if not rows:
+        return f"{title}\n\nNo schema change recorded yet."
+    table = markdown_table(
+        ["When (UTC)", "Layer", "Table", "Column", "Change", "Before", "After", "Source", "PR"],
+        (
+            [
+                row["changed_at"].strftime("%Y-%m-%d %H:%M"),
+                (row.get("layer") or "").upper(),
+                row["table_name"],
+                f"`{row['column_name']}`",
+                row["change_type"].replace("_", " "),
+                row["old_data_type"],
+                row["new_data_type"],
+                row["source"],
+                f"#{row['pull_request']}" if row.get("pull_request") else "",
+            ]
+            for row in rows
+        ),
+    )
+    return f"{title}\n\n{table}"
 
 
 def migrations_section(rows: list[dict] | None) -> str:
@@ -166,6 +193,8 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
                     )
                 )
             )
+        elif section == "history":
+            parts.append(history_section(query(f"select * from `{audit}.schema_history` limit 20")))
         elif section == "schema":
             parts.append(
                 schema_section(
@@ -201,7 +230,7 @@ def build_report(environment: str, sections: list[str], run_results_path: Path) 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sections", default="migrations,schema,drift,dbt")
+    parser.add_argument("--sections", default="migrations,history,drift,dbt")
     parser.add_argument("--run-results", type=Path, default=Path("dbt/target/run_results.json"))
     args = parser.parse_args()
 

@@ -644,6 +644,8 @@ timeline, and the branch stays available for reference.*
 
 ## 8. Change log: monitoring every layer
 
+### Part 1: detect drift in every layer
+
 The first version of this project watched the schema of **BRONZE only**. A
 question during the showcase ("what if someone changes a SILVER or GOLD
 table?") exposed the gap, and [PR #4](https://github.com/flaviobrito/bigquery-schemachange/pull/4) closed it.
@@ -655,6 +657,39 @@ table?") exposed the gap, and [PR #4](https://github.com/flaviobrito/bigquery-sc
 | **After** | Code changes: blocked by contracts in SILVER and GOLD. Manual changes in any layer: detected by the monitor, alerted, and the build is stopped before it can overwrite the evidence |
 | **Objective** | Every structural change, wherever it is made, is either reviewed in Git or reported |
 | **Effect** | Validated on DEV: 71 checks passed with drift aligned on all three layers; scenario 5 shows a manual change detected and resolved |
+
+### Part 2: a schema history for every layer
+
+| | |
+| --- | --- |
+| **Before** | Only BRONZE had a history: `change_history` records which migration ran, but not what SILVER and GOLD looked like over time. A changed SILVER/GOLD column left no trace once dbt rebuilt the table |
+| **What was done** | `bqchange record-schema` snapshots the columns of BRONZE, SILVER and GOLD after each step of a deployment, compares by layer with the previous snapshot and writes one row per change in `<env>_meta.schema_change_log`, with its source (`migration`, `dbt` or `manual`), commit, pull request, run and actor. The view `<env>_audit.schema_history` and the run report show the timeline |
+| **After** | One timeline answers "what changed in the schema, where, when, and because of which change?" for all layers |
+| **Objective** | The migration tool remains the single place to audit schema evolution, even for the tables dbt owns |
+| **Effect** | Validated on DEV: baseline of 181 columns recorded; later runs without changes record nothing; manual changes are labelled `manual` |
+
+```mermaid
+sequenceDiagram
+    participant P as Pipeline
+    participant B as bqchange
+    participant BQ as BigQuery
+    P->>B: record-schema --source manual
+    B->>BQ: snapshot all layers, diff with last snapshot
+    Note right of B: anything different here<br/>was changed outside the pipeline
+    P->>B: deploy (migrations)
+    P->>B: record-schema --source migration
+    P->>BQ: dbt build
+    P->>B: record-schema --source dbt
+    B->>BQ: write changes to schema_change_log
+```
+
+Example of the resulting timeline (`<env>_audit.schema_history`):
+
+| When | Layer | Table | Column | Change | Source | PR |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10:41 | BRONZE | customers | `loyalty_tier` | added | migration | #1 |
+| 11:02 | GOLD | fct_orders | `gross_margin` | type changed | dbt | #5 |
+| 11:30 | GOLD | dim_customers | `manual_note` | added | manual | |
 
 How the audit decides, for each column it finds:
 

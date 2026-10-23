@@ -19,6 +19,7 @@ reads environment variables. It never contains credentials.
 | `maximum-bytes-billed`        | Per-job billing cap; a job above it fails instead of running        |
 | `labels`                      | Labels added to every job (cost attribution)                       |
 | `vars`                        | Variables available in every script                                 |
+| `schema-log-datasets`         | Datasets whose column-level changes `record-schema` logs (all medallion layers) |
 
 `project` and `location` are always available to scripts as variables.
 
@@ -50,6 +51,7 @@ bqchange deploy --dry-run       # plan: render and validate pending scripts with
 bqchange deploy                 # apply pending scripts
 bqchange deploy --out-of-order  # allow versions older than the latest applied one
 bqchange render <path>          # print a rendered script (path relative to root-folder)
+bqchange record-schema --source migration|dbt|manual   # log schema changes since the last snapshot
 bqchange --config other.yml ...
 ```
 
@@ -59,6 +61,29 @@ an invalid first pending script fails the plan.
 
 When `GITHUB_STEP_SUMMARY` is set, `deploy` appends a Markdown table of the
 planned or applied scripts to the GitHub Actions job summary.
+
+## Schema change log (all layers)
+
+Migrations only describe BRONZE. SILVER and GOLD are rebuilt by dbt, so there
+is no script to record. `bqchange record-schema` closes that gap:
+
+1. It reads `INFORMATION_SCHEMA.COLUMNS` of every dataset in `schema-log-datasets`.
+2. It compares the result with the previous snapshot (`<env>_meta.schema_state`),
+   **by layer**, so a pull request clone compares correctly with the DEV state it inherited.
+3. Every added, removed or retyped column becomes one row in
+   `<env>_meta.schema_change_log`, with its **source** and the GitHub context
+   (commit, pull request, workflow run, actor). The first run records a baseline.
+4. The new snapshot replaces the old one.
+
+Pipelines call it around each step, so every change is attributed to whoever made it:
+
+| Call | Records changes made by |
+| --- | --- |
+| `record-schema --source manual` (before anything runs) | someone outside the pipeline since the last snapshot |
+| `record-schema --source migration` (after `deploy`) | bqchange scripts |
+| `record-schema --source dbt` (after `dbt build`) | dbt models |
+
+The view `<env>_audit.schema_history` lists every non-baseline change, newest first.
 
 ## Change history table
 

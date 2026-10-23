@@ -10,6 +10,7 @@ from bqchange.config import Config
 from bqchange.executor import Executor
 from bqchange.history import AppliedScript, ChangeHistory
 from bqchange.render import Renderer, checksum
+from bqchange.schema_log import SchemaLog
 from bqchange.scripts import Script, ScriptType, discover, parse_version
 from bqchange.summary import SummaryRow, render_summary, write_summary
 
@@ -107,6 +108,10 @@ def deploy(
     history = ChangeHistory(executor, config.change_history_table)
     if config.create_change_history_table and not dry_run:
         history.ensure(config.change_history_dataset)
+        if config.schema_log_datasets:
+            # Repeatable scripts may build views over the schema change log.
+            meta_dataset = config.change_history_dataset.split(".", 1)[1]
+            SchemaLog(executor, config.project, meta_dataset, config.schema_log_datasets).ensure()
 
     try:
         applied = history.applied()

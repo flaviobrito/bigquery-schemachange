@@ -98,7 +98,7 @@ docs/                      bqchange reference, runbook and data quality catalogu
 | `V1.2.0__add_customer_marketing_consent.sql` | versioned  | Schema evolution (`ALTER TABLE ... ADD COLUMN`)   |
 | `V1.3.0__create_load_log.sql`                | versioned  | Operational table in AUDIT                        |
 | `R__shared_routines.sql`                     | repeatable | Persistent UDF used by dbt models and tests       |
-| `R__audit_views.sql`                         | repeatable | Views over change history and load log            |
+| `R__audit_views.sql`                         | repeatable | Views over change history, load log and schema history |
 | `A__dataset_options.sql`                     | always     | Converging labels; 7-day table expiration on PR datasets |
 | `A__grants.sql`                              | always     | Dataset-level `GRANT` for a reader principal      |
 
@@ -126,6 +126,9 @@ Checks run in layers. See [docs/data-quality.md](docs/data-quality.md) for the f
 6. **Schema drift audit on BRONZE, SILVER and GOLD**: `INFORMATION_SCHEMA.COLUMNS`
    versus dbt sources and model contracts, with history in `audit_schema_snapshots`
    and Slack/Teams alerts. Manual changes in BigQuery are reported before dbt overwrites them.
+7. **Schema history for every layer**: `bqchange record-schema` logs each added,
+   removed or retyped column of BRONZE, SILVER and GOLD with its source
+   (migration, dbt or manual), commit and pull request (`<env>_audit.schema_history`).
 
 Failing rows of every test are stored in `<env>_audit`.
 

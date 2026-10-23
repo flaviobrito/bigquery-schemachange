@@ -25,3 +25,23 @@ select
     max(loaded_at) as last_loaded_at
 from `{{ project }}.{{ env }}_audit.load_log`
 group by table_name, load_date;
+
+create or replace view `{{ project }}.{{ env }}_audit.schema_history`
+options (description = 'Column-level schema changes of every layer, newest first, with their source.')
+as
+select
+    changed_at,
+    layer,
+    table_name,
+    column_name,
+    change_type,
+    old_data_type,
+    new_data_type,
+    source,
+    pull_request,
+    git_sha,
+    run_url,
+    actor
+from `{{ project }}.{{ env }}_meta.schema_change_log`
+where change_type != 'baseline'
+order by changed_at desc;

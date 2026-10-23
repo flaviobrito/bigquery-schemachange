@@ -175,6 +175,14 @@ Everything else (`stg_ecommerce__*`, `int_orders__*`, `dim_*`, `fct_*`,
 *dbt documentation of `fct_orders`: a model table built by dbt, with the column
 types enforced by its contract (the project ID is replaced by `example-project`).*
 
+### Applied vs observed changes
+
+bqchange keeps two records. The **change history** lists what it *applied*: the
+migration scripts it ran. The **schema change log** lists what it *observes* in
+BigQuery: every table and view of the monitored datasets, whoever created or
+changed them (a migration, a dbt model or a person in the console). The second
+one is why SILVER and GOLD tables, which have no migrations, still have a full history.
+
 ### Git, pull requests and CI/CD
 
 - **Git** keeps the history of every file. **GitHub** hosts it.
@@ -769,6 +777,26 @@ models:
     staging: {+schema: staging}
     marts: {+schema: marts}
 ```
+
+### Part 5: table and column metadata
+
+| | |
+| --- | --- |
+| **Before** | The schema history covered columns only (added, removed, type). A change to partitioning, clustering, a table's description or labels, or a column description went unrecorded |
+| **What was done** | `record-schema` also snapshots table and column **properties** from `INFORMATION_SCHEMA.TABLES`, `TABLE_OPTIONS`, `COLUMNS` and `COLUMN_FIELD_PATHS`, compares them with the previous snapshot (`schema_state_properties`) and logs `property_added`, `property_removed` and `property_changed` with the old and new value |
+| **After** | One timeline for structure **and** metadata, for every table of the monitored datasets, with its source |
+| **Objective** | Make every structural decision visible, including the ones that affect cost (partitioning, clustering) and governance (labels, descriptions) |
+| **Effect** | Validated on DEV: 235 properties snapshotted; a description edited by hand on `customers` and a new description on `customers.email` were reported by the monitor as `manual`, with before/after values |
+
+![Two manual metadata changes reported by the monitor](images/metadata-changes-summary.jpg)
+
+*Monitor run on DEV: the table description was changed and a column description
+was added in the BigQuery console; both appear with their old and new values.*
+
+![One timeline with manual, migration and dbt changes](images/schema-history-all-sources.jpg)
+
+*The schema history of DEV after the test: metadata edited by hand (`manual`), a
+column added by a migration (`migration`, PR #1) and a new model version (`dbt`).*
 
 How the audit decides, for each column it finds:
 

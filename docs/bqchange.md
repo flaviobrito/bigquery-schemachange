@@ -65,18 +65,32 @@ an invalid first pending script fails the plan.
 When `GITHUB_STEP_SUMMARY` is set, `deploy` appends a Markdown table of the
 planned or applied scripts to the GitHub Actions job summary.
 
-## Schema change log (all layers)
+## Schema change log (all monitored datasets)
 
-Migrations only describe BRONZE. SILVER and GOLD are rebuilt by dbt, so there
-is no script to record. `bqchange record-schema` closes that gap:
+The change history records what bqchange **applied** (its own scripts). The
+schema change log records what bqchange **observes** in BigQuery's catalog, for
+**every table and view** of the monitored datasets, whoever changed them:
+migrations, dbt models or people in the console. `bqchange record-schema`:
 
 1. It reads `INFORMATION_SCHEMA.COLUMNS` of the dataset of every layer in `schema-log-layers`.
 2. It compares the result with the previous snapshot (`<env>_meta.schema_state`),
    **by layer**, so a pull request clone compares correctly with the DEV state it inherited.
-3. Every added, removed or retyped column becomes one row in
-   `<env>_meta.schema_change_log`, with its **source** and the GitHub context
-   (commit, pull request, workflow run, actor). The first run records a baseline.
-4. The new snapshot replaces the old one.
+3. Every change becomes one row in `<env>_meta.schema_change_log`, with its
+   **source** and the GitHub context (commit, pull request, workflow run, actor):
+
+   | Level | Changes | `change_type` |
+   | --- | --- | --- |
+   | Column | added, removed, type changed | `added`, `removed`, `type_changed` |
+   | Column | description | `property_added` / `property_removed` / `property_changed` with `property = description` |
+   | Table | table type, partitioning, clustering, every table option (`option:description`, `option:labels`, `option:expiration_timestamp`…) | `property_*` with `column_name = (table)` |
+
+   The first run records a column **baseline**; the first property snapshot only
+   sets the state. Properties of tables being created or dropped are not listed
+   (the column changes already describe the table).
+4. The new snapshots replace the old ones (`schema_state`, `schema_state_properties`).
+
+Coverage: only the datasets of `schema-log-layers`. Add a layer to watch any
+other dataset, including one no tool manages.
 
 Pipelines call it around each step, so every change is attributed to whoever made it:
 

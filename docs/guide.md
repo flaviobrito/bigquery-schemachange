@@ -691,6 +691,50 @@ Example of the resulting timeline (`<env>_audit.schema_history`):
 | 11:02 | GOLD | fct_orders | `gross_margin` | type changed | dbt | #5 |
 | 11:30 | GOLD | dim_customers | `manual_note` | added | manual | |
 
+### Part 3: versioning GOLD models for breaking changes
+
+Detecting and recording a change is not enough when the change **breaks the
+people who read the table** (dashboards, analysts, other teams). For those,
+GOLD models are versioned with dbt's
+[model versions](https://docs.getdbt.com/docs/collaborate/govern/model-versions).
+
+| | |
+| --- | --- |
+| **Before** | `dim_customers` exposed each customer's raw `email`. Removing it would have broken every query that selects it, the moment the change was deployed |
+| **What was done** | `dim_customers` now has two versions. **v1** (`dim_customers_v1.sql`) is unchanged and stays at the original relation `dim_customers`, with `deprecation_date: 2026-11-22`. **v2** (`dim_customers_v2.sql`, relation `dim_customers_v2`) drops `email` and adds `email_domain`. `latest_version: 2`, so `ref('dim_customers')` inside the project resolves to v2 |
+| **After** | Both versions are built, tested (data tests and unit test run for each) and under contract. Consumers move from `dim_customers` to `dim_customers_v2` within 30 days; then v1 is removed in a new pull request |
+| **Objective** | Breaking changes follow a contract with consumers: announced, overlapping, and with a date |
+| **Effect** | No dashboard breaks on deployment day. The schema history records the new relation (`dim_customers_v2`, 14 columns added by `dbt`), and the drift audit covers both versions |
+
+```mermaid
+timeline
+    title dim_customers lifecycle
+    Today : v2 released (dim_customers_v2)
+          : v1 kept as dim_customers, deprecated
+    Next 30 days : consumers switch to dim_customers_v2
+    2026-11-22 : pull request removes v1
+               : schema history records dim_customers columns removed
+```
+
+**Which changes need a new version?**
+
+| Change in a GOLD model | Breaking? | What to do |
+| --- | --- | --- |
+| Add a column | No | Change the model and its contract |
+| Widen a type (e.g. add decimal precision) | Usually no | Change the contract; full refresh incremental models |
+| Remove or rename a column | **Yes** | New version, deprecate the old one |
+| Change a column's meaning or grain | **Yes** | New version, deprecate the old one |
+
+**For consumers (migration guide):**
+
+```sql
+-- before (v1, deprecated, available until 2026-11-22)
+select customer_id, email, customer_segment from `<project>.prod_gold.dim_customers`;
+
+-- after (v2)
+select customer_id, email_domain, customer_segment from `<project>.prod_gold.dim_customers_v2`;
+```
+
 How the audit decides, for each column it finds:
 
 ```mermaid

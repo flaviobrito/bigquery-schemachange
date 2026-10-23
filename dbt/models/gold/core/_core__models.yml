@@ -140,7 +140,11 @@ models:
         data_type: numeric(18, 2)
 
   - name: dim_customers
-    description: One row per customer with lifetime value and segment.
+    description: >
+      One row per customer with lifetime value and segment. Versioned: v2 stops
+      exposing the raw email (privacy) and adds email_domain. v1 stays available
+      at the original relation name until its deprecation date.
+    latest_version: 2
     config:
       contract: {enforced: true}
     constraints:
@@ -189,6 +193,21 @@ models:
           - accepted_values:
               arguments:
                 values: [prospect, new, returning, vip]
+    versions:
+      - v: 1
+        # Same relation as before versioning, so existing queries keep working.
+        config:
+          alias: dim_customers
+        deprecation_date: 2026-11-22
+        columns:
+          - include: all
+      - v: 2
+        columns:
+          - include: all
+            exclude: [email]
+          - name: email_domain
+            data_type: string
+            description: Domain part of the customer's email (e.g. example.com); replaces email.
 
   - name: dim_products
     description: One row per product with list margin.

@@ -7,12 +7,14 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from bqchange import cli_scripts
 from bqchange.config import Config
 from bqchange.executor import Executor
 from bqchange.history import AppliedScript, ChangeHistory
 from bqchange.render import Renderer, checksum
 from bqchange.schema_log import SchemaLog
 from bqchange.scripts import Script, ScriptType, discover, parse_version
+from bqchange.secrets import Redactor
 from bqchange.summary import SummaryRow, render_summary, write_summary
 
 logger = logging.getLogger(__name__)
@@ -191,13 +193,8 @@ def deploy(
         applied = []
 
     renderer = Renderer.from_config(config)
-    variables = {
-        "project": config.project,
-        "location": config.location,
-        "layers": config.layers,
-        **config.vars,
-    }
-    result = plan(discover(config.root_folder), applied, renderer, variables, out_of_order)
+    redact = Redactor(config.secrets)
+    result = plan(discover(config.root_folder), applied, renderer, config.variables, out_of_order)
     pending = result.pending
     for upgrade in result.checksum_upgrades:
         if dry_run:
@@ -230,6 +227,17 @@ def deploy(
             "diff": item.diff,
         }
         label = f"{item.script.relative_path} ({item.reason})"
+        if dry_run and item.script.is_cli:
+            try:
+                steps = cli_scripts.validate(item.content, config.cli_allowed_commands)
+                logger.info("PLAN  %s - valid CLI script, %s", label, steps)
+                outcome = f"✅ valid CLI script ({steps})"
+            except cli_scripts.CliScriptError as error:
+                logger.error("PLAN  %s - invalid: %s", label, redact(error))
+                outcome = f"❌ invalid: {redact(error)}"
+                failed_validation = True
+            rows.append(SummaryRow(**row, outcome=outcome))
+            continue
         if dry_run:
             result = executor.dry_run(item.content)
             if result.ok:
@@ -237,11 +245,11 @@ def deploy(
                 outcome = f"✅ valid ({result.bytes_processed:,} bytes)"
             elif index > 0:
                 # Earlier pending scripts may create the objects this one references.
-                logger.warning("PLAN  %s - not validated yet: %s", label, result.error)
+                logger.warning("PLAN  %s - not validated yet: %s", label, redact(result.error))
                 outcome = "⏳ depends on an earlier pending script"
             else:
-                logger.error("PLAN  %s - invalid: %s", label, result.error)
-                outcome = f"❌ invalid: {result.error}"
+                logger.error("PLAN  %s - invalid: %s", label, redact(result.error))
+                outcome = f"❌ invalid: {redact(result.error)}"
                 failed_validation = True
             rows.append(SummaryRow(**row, outcome=outcome))
             continue
@@ -249,9 +257,12 @@ def deploy(
         started = time.monotonic()
         logger.info("APPLY %s", label)
         try:
-            executor.execute(item.content)
+            if item.script.is_cli:
+                cli_scripts.run(item.content, config.cli_allowed_commands, redact)
+            else:
+                executor.execute(item.content)
         except Exception as error:
-            rows.append(SummaryRow(**row, outcome=f"❌ failed: {error}"))
+            rows.append(SummaryRow(**row, outcome=f"❌ failed: {redact(error)}"))
             write_summary(render_summary(title, environment, rows))
             raise
         elapsed_ms = int((time.monotonic() - started) * 1000)

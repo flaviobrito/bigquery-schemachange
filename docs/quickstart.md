@@ -90,6 +90,26 @@ export BQ_ENV=quickstart
 mkdir -p migrations/scripts/{versioned,repeatable,always}
 ```
 
+Check that everything is in place before writing any script:
+
+```bash
+uv run bqchange verify
+```
+
+```text
+Checks
+  ✅ credentials          user credentials (gcloud auth application-default login)
+  ✅ run jobs             dry-run job in <project>
+  ✅ root-folder          .../migrations/scripts
+  ⚠️ layer raw            quickstart_raw does not exist yet (a migration may create it)
+  ⚠️ layer analytics      quickstart_analytics does not exist yet (a migration may create it)
+  ⚠️ change history       <project>.quickstart_meta.change_history will be created by the first deploy
+```
+
+Warnings are expected on a fresh environment; a ❌ would stop you here with the reason.
+Every setting can also come from flags or `BQCHANGE_*` variables
+([priority](bqchange.md#priority)).
+
 > No credentials go in this file. Commit it.
 
 ## 4. Write your first migrations (2 min)
@@ -400,7 +420,8 @@ To set this up (keyless authentication, environments, approvals), follow
 
 | Command | What it does |
 | --- | --- |
-| `bqchange render <path>` | Print a script with variables filled in (offline) |
+| `bqchange verify` | Check configuration, credentials and permissions (secrets masked) |
+| `bqchange render <path>` | Print a script with variables filled in, secrets masked (offline) |
 | `bqchange deploy --dry-run` | Plan: list and validate pending scripts, change nothing |
 | `bqchange deploy` | Apply pending scripts and record them in `change_history` |
 | `bqchange deploy --out-of-order` | Allow a version older than the latest applied one |

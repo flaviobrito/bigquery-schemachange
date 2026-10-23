@@ -4,6 +4,9 @@ Naming follows schemachange:
     V<version>__<description>.sql   versioned, applied once, in version order
     R__<description>.sql            repeatable, re-applied when the rendered content changes
     A__<description>.sql            always, applied on every deployment
+
+The same prefixes work with the .cli.yml extension for CLI migration scripts
+(bq, gcloud, gsutil steps), e.g. V1.5.0__recluster_orders.cli.yml.
 """
 
 from __future__ import annotations
@@ -15,10 +18,10 @@ from pathlib import Path
 
 _PATTERNS = {
     "V": re.compile(
-        r"^V(?P<version>\d+(?:[._]\d+)*)__(?P<description>.+?)\.sql(?:\.jinja)?$", re.I
+        r"^V(?P<version>\d+(?:[._]\d+)*)__(?P<description>.+?)\.(?:sql|cli\.yml)(?:\.jinja)?$", re.I
     ),
-    "R": re.compile(r"^R__(?P<description>.+?)\.sql(?:\.jinja)?$", re.I),
-    "A": re.compile(r"^A__(?P<description>.+?)\.sql(?:\.jinja)?$", re.I),
+    "R": re.compile(r"^R__(?P<description>.+?)\.(?:sql|cli\.yml)(?:\.jinja)?$", re.I),
+    "A": re.compile(r"^A__(?P<description>.+?)\.(?:sql|cli\.yml)(?:\.jinja)?$", re.I),
 }
 
 
@@ -35,6 +38,10 @@ class Script:
     script_type: ScriptType
     description: str
     version: str | None = None
+
+    @property
+    def is_cli(self) -> bool:
+        return ".cli.yml" in self.name.lower()
 
     @property
     def version_key(self) -> tuple[int, ...]:

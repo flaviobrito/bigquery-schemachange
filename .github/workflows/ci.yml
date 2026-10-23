@@ -83,6 +83,9 @@ jobs:
 
       # Table clones carry DEV's BRONZE data, audit history and change history,
       # so only the migrations introduced by this pull request are applied.
+      - name: bqchange verify
+        run: uv run bqchange verify
+
       - name: Clone DEV into pull request datasets
         run: uv run python -m ops.manage_environment clone --source dev --target "$BQ_ENV"
 

@@ -14,3 +14,4 @@ project ID is masked by GitHub as `***`).
 | [Production deployment (after manual approval)](deploy-prod.md) | ✅ passed | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39883046028) |
 | [Scenario 5: a manual change in BigQuery is detected](scenario5-manual-change.md) | ❌ detected, ✅ after restore | [effect run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39940900977) |
 | [Metadata changes made by hand (descriptions, labels, clustering, options)](metadata-manual-changes.md) | ✅ detected | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/40014607084) |
+| [Metadata changes made in code (partitioning, clustering) shown in the pull request](metadata-code-changes.md) | ✅ commented on PR #8 | [run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/40015753527) |

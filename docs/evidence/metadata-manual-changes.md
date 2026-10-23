@@ -27,6 +27,12 @@ new value and the source `manual`.
 
 ![Labels, clustering and partition expiration changed by hand](../images/evidence-manual-labels-clustering-options.jpg)
 
+## The same history in BigQuery
+
+![Query over dev_audit.schema_history in the BigQuery console](../images/bigquery-console-schema-history.jpg)
+
+*Both rounds (and the restores) as rows of `dev_audit.schema_history`, queried in the BigQuery console.*
+
 ## Expected vs actual
 
 | Expected | Actual |

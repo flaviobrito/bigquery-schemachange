@@ -174,6 +174,22 @@ its table exists) and identifies the change forever. Rules:
   fingerprint and refuses to continue if it was edited. To change something,
   add a new version.
 
+### What it looks like in BigQuery
+
+![BigQuery console: datasets per environment and the schema of dev_bronze.customers](docs/images/bigquery-console-customers-schema.jpg)
+
+*The BigQuery console after deployment: one set of datasets per environment
+(`dev_*`, `prod_*`, and `pr_8_*` for an open pull request). `dev_bronze.customers`
+shows the columns created by migrations, including `marketing_opt_in` (V1.2.0)
+and `loyalty_tier` (V1.4.0, pull request #1), with their descriptions and the
+`current_timestamp()` default of `_loaded_at`.*
+
+![BigQuery console: orders table details with partitioning, clustering, labels and description](docs/images/bigquery-console-orders-details.jpg)
+
+*Details of `dev_bronze.orders`, as defined by `V1.1.0__create_bronze_tables.sql`:
+partitioned by day on `_loaded_at`, clustered by `order_id`, label `layer: bronze`
+and the table description. bqchange tracks all of these properties.*
+
 ### What goes inside each file
 
 Plain BigQuery SQL, one or more statements, with
@@ -279,6 +295,14 @@ old and new value and the source `manual`.*
 
 *The accumulated history of the environment: manual metadata changes, a column
 added by a migration in pull request #1, and a new dbt model version, in one timeline.*
+
+The history is a regular BigQuery view, so it can be queried and dashboarded like any table:
+
+![BigQuery console: query over dev_audit.schema_history showing metadata changes with before and after values](docs/images/bigquery-console-schema-history.jpg)
+
+*`dev_audit.schema_history` queried in the BigQuery console: labels, clustering,
+partition expiration and descriptions changed by hand, each with its old and new
+value and the source `manual`.*
 
 ### What is not covered
 

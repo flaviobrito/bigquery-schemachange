@@ -794,6 +794,10 @@ models:
 
 ### Part 5: table and column metadata
 
+![The orders table in the BigQuery console: partitioning, clustering, labels](images/bigquery-console-orders-details.jpg)
+
+*The properties tracked from Part 5 on, as BigQuery shows them for `dev_bronze.orders`.*
+
 | | |
 | --- | --- |
 | **Before** | The schema history covered columns only (added, removed, type). A change to partitioning, clustering, a table's description or labels, or a column description went unrecorded |

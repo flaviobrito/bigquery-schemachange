@@ -60,3 +60,20 @@ def test_loader_adds_lineage_and_converts_booleans(tmp_path):
     assert [row["_source_row_number"] for row in rows] == list(range(1, len(rows) + 1))
     assert rows[0]["_loaded_at"] == "2026-01-02T00:00:00+00:00"
     assert all(isinstance(row["marketing_opt_in"], bool) for row in rows)
+
+
+@pytest.mark.parametrize(
+    ("layer", "table_id", "table_type", "expected"),
+    [
+        ("bronze", "customers", "TABLE", True),
+        ("meta", "change_history", "TABLE", True),
+        ("audit", "audit_schema_snapshots", "TABLE", True),
+        ("audit", "load_log", "TABLE", True),
+        ("audit", "dbt_expectations_expect_table_abc", "TABLE", False),
+        ("audit", "deployment_history", "VIEW", False),
+    ],
+)
+def test_clone_selection(layer, table_id, table_type, expected):
+    from ops.manage_environment import should_clone
+
+    assert should_clone(layer, table_id, table_type) is expected

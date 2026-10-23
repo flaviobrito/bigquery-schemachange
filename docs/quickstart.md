@@ -94,11 +94,18 @@ mkdir -p migrations/scripts/{versioned,repeatable,always}
 
 ## 4. Write your first migrations (2 min)
 
-The three script types:
+A migration is a SQL file that changes the database **structure**; bqchange runs
+each one once, in order, and records it. You only need migrations for what dbt
+does **not** build: datasets, source/landing tables, functions, grants. Your dbt
+models never need one (dbt creates a table per model file). Only these scripts
+live under `migrations/scripts/`; the rest of your project stays where it is.
+See [the README](../README.md#migrations-what-they-are-and-when-you-need-one) for the full explanation.
+
+The three script types, recognised **by file name**:
 
 | File name | Runs | Use it for |
 | --- | --- | --- |
-| `V<version>__<name>.sql` | once, in version order; never edit after it ran | datasets, tables, `alter table` |
+| `V<version>__<name>.sql` | once, in version order (compared as numbers: `V1.10` after `V1.2`); never edit after it ran | datasets, tables, `alter table` |
 | `R__<name>.sql` | whenever the file changes | views, functions |
 | `A__<name>.sql` | on every deployment | grants, labels |
 

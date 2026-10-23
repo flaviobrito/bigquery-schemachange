@@ -96,28 +96,147 @@ tests/                     pytest suite for bqchange and ops
 docs/                      bqchange reference, runbook and data quality catalogue
 ```
 
-## Migrations
+## Migrations: what they are and when you need one
 
-| Script                                       | Type       | Demonstrates                                     |
-| -------------------------------------------- | ---------- | ------------------------------------------------ |
-| `V1.0.0__create_medallion_datasets.sql`      | versioned  | Datasets with location, labels and descriptions   |
-| `V1.1.0__create_bronze_tables.sql`           | versioned  | Jinja module import, partitioning and clustering  |
-| `V1.2.0__add_customer_marketing_consent.sql` | versioned  | Schema evolution (`ALTER TABLE ... ADD COLUMN`)   |
-| `V1.3.0__create_load_log.sql`                | versioned  | Operational table in AUDIT                        |
-| `R__shared_routines.sql`                     | repeatable | Persistent UDF used by dbt models and tests       |
-| `R__audit_views.sql`                         | repeatable | Views over change history, load log and schema history |
-| `A__dataset_options.sql`                     | always     | Converging labels; 7-day table expiration on PR datasets |
-| `A__grants.sql`                              | always     | Dataset-level `GRANT` for a reader principal      |
+### The idea
+
+A **migration** is a small SQL file that changes the **structure** of the
+database: create a dataset, create a table, add a column. Instead of typing
+`ALTER TABLE` in the BigQuery console, you commit the statement as a file. A
+tool (`bqchange`) runs each file **once**, in order, in every environment, and
+records what it ran in a history table.
+
+Think of it as a numbered logbook: anyone can rebuild an identical database
+from an empty project by replaying the pages in order, and everyone can see
+when and why each change happened.
+
+### What needs a migration, and what does not
+
+You do **not** write a migration for every table. Only for objects that dbt does
+not build:
+
+| Object | Needs a migration? | Why |
+| --- | --- | --- |
+| Datasets (`dev_bronze`, `prod_gold`, …) | ✅ Yes | They must exist before anything else |
+| **Landing / source tables** (BRONZE) | ✅ Yes | They hold data loaded from outside; they cannot be dropped and rebuilt, so their structure changes with careful `ALTER TABLE`s |
+| Functions (UDFs), shared views, grants, labels | ✅ Yes (repeatable/always scripts) | Infrastructure that dbt models use but do not own |
+| **dbt models** (SILVER, GOLD: `stg_*`, `dim_*`, `fct_*`) | ❌ **No** | dbt creates one table per `.sql` file in `dbt/models/`, named after the file, and rebuilds it on every run. Changing a model = editing its `.sql` and contract |
+
+So your dbt project stays exactly where it is (`dbt/models/...`). The
+`migrations/` folder only holds the handful of database scripts listed above.
+In this project that is **9 files** for the whole platform, against 15 dbt models.
+
+```
+migrations/                      ← database structure, applied by bqchange
+  bqchange.yml                   ← configuration (project, layers, history table)
+  scripts/
+    versioned/  V1.0.0__create_medallion_datasets.sql
+                V1.1.0__create_bronze_tables.sql
+                ...
+    repeatable/ R__shared_routines.sql
+    always/     A__grants.sql
+dbt/models/                      ← transformations, built by dbt (unchanged)
+  silver/  gold/  audit/
+```
+
+The `versioned/`, `repeatable/` and `always/` subfolders are only for
+readability: bqchange scans everything under `root-folder` and recognises each
+file **by its name**, not by its folder.
+
+### Anatomy of a file name
+
+```
+V1.2.0__add_customer_marketing_consent.sql
+│└─┬─┘└┬┘└──────────────┬─────────────┘└┬┘
+│  │   │                │               └─ extension: .sql (or .sql.jinja)
+│  │   │                └─ description: free text, words separated by "_"
+│  │   └─ separator: two underscores
+│  └─ version: numbers separated by "." or "_"
+└─ type: V = versioned, R = repeatable, A = always
+```
+
+| Type | Name | Runs | Typical content |
+| --- | --- | --- | --- |
+| **Versioned** | `V<version>__<description>.sql` | **once**, in version order; never edited afterwards | `create schema`, `create table`, `alter table ... add column` |
+| **Repeatable** | `R__<description>.sql` | again **whenever the file changes** | `create or replace view`, `create or replace function` |
+| **Always** | `A__<description>.sql` | on **every** deployment, last | `grant ...`, `alter schema ... set options (labels ...)` |
+
+**Why a version number?** It fixes the order (a column can only be added after
+its table exists) and identifies the change forever. Rules:
+
+- Versions are compared **as numbers**, not text: `V1.10.0` runs after `V1.2.0`.
+- Any numeric scheme works: `V1`, `V1.1`, `V2_0`, or dates such as `V2026.10.23.1`.
+  This project uses `MAJOR.MINOR.PATCH`; pick one convention and keep it.
+- The next migration takes the **next number** after the highest one applied.
+  A lower number fails unless you deploy with `--out-of-order`.
+- Once applied, a versioned file is **immutable**: bqchange compares its
+  fingerprint and refuses to continue if it was edited. To change something,
+  add a new version.
+
+### What goes inside each file
+
+Plain BigQuery SQL, one or more statements, with
+[Jinja](https://jinja.palletsprojects.com/) placeholders so the same file works in
+every environment (`dev_bronze`, `prod_bronze`, `pr_42_bronze`):
+
+```sql
+-- migrations/scripts/versioned/V1.2.0__add_customer_marketing_consent.sql
+alter table `{{ project }}.{{ env }}_bronze.customers`
+add column if not exists marketing_opt_in bool
+options (description = 'Customer accepted marketing communication');
+```
+
+```sql
+-- migrations/scripts/repeatable/R__shared_routines.sql
+create or replace function `{{ project }}.{{ env }}_audit.is_valid_email`(email string)
+returns bool
+as (regexp_contains(lower(trim(email)), r'^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$'));
+```
+
+Good practice: **one logical change per versioned file**, a description that
+says what it does, and `if not exists` / `if exists` so a script is safe to
+re-run on a copy of the database. Variables available: `project`, `location`,
+`layers` (e.g. `{{ layers.bronze }}`) and everything under `vars` in `bqchange.yml`.
+
+Preview any script without touching BigQuery:
+
+```bash
+uv run bqchange render versioned/V1.2.0__add_customer_marketing_consent.sql
+```
+
+### The scripts in this project
+
+| Script | Type | Demonstrates |
+| --- | --- | --- |
+| `V1.0.0__create_medallion_datasets.sql` | versioned | Datasets with location, labels and descriptions |
+| `V1.1.0__create_bronze_tables.sql` | versioned | The 5 landing tables; Jinja module import, partitioning and clustering |
+| `V1.2.0__add_customer_marketing_consent.sql` | versioned | Schema evolution (`ALTER TABLE ... ADD COLUMN`) |
+| `V1.3.0__create_load_log.sql` | versioned | Operational table in AUDIT |
+| `V1.4.0__add_customer_loyalty_tier.sql` | versioned | A later column added through a pull request ([#1](https://github.com/flaviobrito/bigquery-schemachange/pull/1)) |
+| `R__shared_routines.sql` | repeatable | Persistent UDF used by dbt models and tests |
+| `R__audit_views.sql` | repeatable | Views over change history, load log and schema history |
+| `A__dataset_options.sql` | always | Converging labels; 7-day table expiration on PR datasets |
+| `A__grants.sql` | always | Dataset-level `GRANT` for a reader principal |
 
 ```bash
 uv run bqchange deploy --dry-run   # plan: pending scripts validated by BigQuery dry runs
 uv run bqchange deploy             # apply and record in <env>_meta.change_history
-uv run bqchange render versioned/V1.2.0__add_customer_marketing_consent.sql
 ```
 
-Safety rules enforced by `bqchange` (see [docs/bqchange.md](docs/bqchange.md)):
-an applied versioned script can never change, versions cannot be applied out of
-order without `--out-of-order`, and every job runs with a `maximum_bytes_billed` cap.
+### Frequently asked questions
+
+| Question | Answer |
+| --- | --- |
+| Do I need a migration for each dbt model? | **No.** dbt builds its models. Migrations are only for what dbt does not build (datasets, source tables, UDFs, grants) |
+| My tables already exist. Do I script them all? | Only the source tables you want under version control. Write a first migration with `create table if not exists` matching today's structure: on existing environments it changes nothing, on new ones it creates the table |
+| Must my SQL files live in a special folder like `dbscripts/`? | Only migrations go under `root-folder` (`migrations/scripts` here, configurable). dbt models, Python and everything else stay where they are |
+| Can one file contain several changes? | Yes, it runs as one BigQuery script. Prefer one logical change per file so the history is readable |
+| How do I rename or drop a column? | A new versioned script (`alter table ... rename column` / `drop column`), and update the dbt source declaration in the same pull request; the schema drift audit checks they match |
+| I made a mistake in an applied migration | Never edit it: write the next version that fixes it (forward fix). See [rollback](docs/runbook.md#4-rollback) |
+| What does bqchange record? | One row per applied script in `<env>_meta.change_history` (version, checksum, duration, who, when), plus column-level schema history of every layer in `<env>_meta.schema_change_log` |
+
+The full rule set is in [docs/bqchange.md](docs/bqchange.md); a hands-on walk-through
+is the [15-minute quickstart](docs/quickstart.md).
 
 ## Data quality
 

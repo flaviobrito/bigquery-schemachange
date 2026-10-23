@@ -111,7 +111,9 @@ jobs:
       - name: dbt build
         run: |
           if [ "${{ steps.state.outputs.available }}" = "true" ]; then
-            uv run dbt build --select state:modified+ tag:schema_audit --defer --state dbt/state
+            # --state is resolved from the dbt project dir, so pass an absolute path.
+            uv run dbt build --select state:modified+ tag:schema_audit --defer \
+              --state "$GITHUB_WORKSPACE/dbt/state"
           else
             uv run dbt build
           fi

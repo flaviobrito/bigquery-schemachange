@@ -58,3 +58,11 @@ def test_dbt_section_counts_statuses_and_lists_failures():
     )
     assert "❌ fail: 1" in section
     assert "`assert_no_bronze_schema_drift`" in section
+
+
+def test_failed_queries_are_never_reported_as_success():
+    from ops.report import migrations_section, schema_section
+
+    for section in (drift_section(None), migrations_section(None), schema_section(None)):
+        assert "⚠️ Not available" in section
+        assert "✅" not in section

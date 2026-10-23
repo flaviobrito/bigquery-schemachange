@@ -19,9 +19,12 @@ class FakeExecutor:
         self.executed: list[str] = []
         self.recorded: list[dict] = []
         self.datasets: list[str] = []
+        self.upgrades: list[dict] = []
 
     def execute(self, sql, params=None):
-        if params and "checksum" in params:
+        if params and "new" in params:
+            self.upgrades.append(params)
+        elif params and "checksum" in params:
             self.recorded.append(params)
         else:
             self.executed.append(sql)
@@ -66,7 +69,9 @@ def project(tmp_path: Path, monkeypatch) -> Path:
     return tmp_path
 
 
-def applied_from(project: Path, *names: str, checksum_override: str | None = None):
+def applied_from(
+    project: Path, *names: str, checksum_override: str | None = None, legacy: bool = False
+):
     config = load_config(project / "bqchange.yml")
     renderer = Renderer.from_config(config)
     variables = {"project": config.project, "location": config.location, **config.vars}
@@ -74,6 +79,8 @@ def applied_from(project: Path, *names: str, checksum_override: str | None = Non
     for script in discover(config.root_folder):
         if script.name in names:
             content = renderer.render(script.relative_path, variables)
+            if script.script_type is ScriptType.VERSIONED and not legacy:
+                content = renderer.source(script.relative_path)
             rows.append(
                 AppliedScript(
                     script=script.name,
@@ -156,7 +163,7 @@ def test_changed_repeatable_script_is_reapplied(project):
         applied,
         Renderer.from_config(config),
         {"project": config.project, "location": config.location, **config.vars},
-    )
+    ).pending
     assert [(p.script.name, p.reason) for p in pending] == [
         ("R__views.sql", "content changed"),
         ("A__grants.sql", "always"),
@@ -218,3 +225,46 @@ def test_dry_run_summary_marks_dependent_scripts(project, tmp_path, monkeypatch)
     executor = FakeExecutor(dry_run_errors={"select 10": "Not found"})
     deploy(load_config(project / "bqchange.yml"), executor, dry_run=True)
     assert "⏳ depends on an earlier pending script" in summary.read_text()
+
+
+def test_versioned_checksums_do_not_depend_on_the_environment(project, monkeypatch):
+    """A pull request clone inherits DEV's history but renders pr_1 dataset names."""
+    applied = applied_from(
+        project, "V1.0.0__first.sql", "V1.2.0__second.sql", "V1.10.0__tenth.sql", "R__views.sql"
+    )
+    monkeypatch.setenv("BQ_ENV", "pr_1")
+    executor = FakeExecutor(applied)
+    deploy(load_config(project / "bqchange.yml"), executor)
+    assert [row["script"] for row in executor.recorded] == ["A__grants.sql"]
+
+
+def test_editing_the_raw_file_is_still_rejected_in_any_environment(project, monkeypatch):
+    applied = applied_from(project, "V1.0.0__first.sql")
+    (project / "scripts" / "versioned" / "V1.0.0__first.sql").write_text("create schema `x`")
+    monkeypatch.setenv("BQ_ENV", "pr_1")
+    with pytest.raises(MigrationError, match="immutable"):
+        deploy(load_config(project / "bqchange.yml"), FakeExecutor(applied))
+
+
+def test_legacy_rendered_checksums_are_upgraded_once(project):
+    applied = applied_from(
+        project,
+        "V1.0.0__first.sql",
+        "V1.2.0__second.sql",
+        "V1.10.0__tenth.sql",
+        "R__views.sql",
+        legacy=True,
+    )
+    executor = FakeExecutor(applied)
+    deploy(load_config(project / "bqchange.yml"), executor)
+
+    # V1.10.0 has no Jinja: its rendered and raw checksums are identical.
+    assert [u["script"] for u in executor.upgrades] == ["V1.0.0__first.sql", "V1.2.0__second.sql"]
+    assert [row["script"] for row in executor.recorded] == ["A__grants.sql"]
+
+
+def test_dry_run_never_upgrades_checksums(project):
+    applied = applied_from(project, "V1.0.0__first.sql", legacy=True)
+    executor = FakeExecutor(applied)
+    deploy(load_config(project / "bqchange.yml"), executor, dry_run=True)
+    assert executor.upgrades == []

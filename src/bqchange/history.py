@@ -51,6 +51,17 @@ class ChangeHistory:
         )
         return [AppliedScript(**row) for row in rows]
 
+    def update_checksum(self, script: str, old: str, new: str) -> None:
+        """Rewrite a legacy checksum in place (see deploy.ChecksumUpgrade)."""
+        self._executor.execute(
+            f"""
+            update `{self._table}`
+            set checksum = @new
+            where script = @script and checksum = @old
+            """,
+            params={"script": script, "old": old, "new": new},
+        )
+
     def record(
         self,
         *,

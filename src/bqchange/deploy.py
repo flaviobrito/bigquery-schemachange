@@ -28,13 +28,34 @@ class PendingScript:
     reason: str
 
 
+@dataclass(frozen=True)
+class ChecksumUpgrade:
+    """A versioned script recorded with a checksum of its *rendered* content.
+
+    Versioned checksums are computed on the raw file so they are identical in
+    every environment (rendered SQL contains the environment's dataset names,
+    which made clones look modified). Rows written before that change are
+    recognised and rewritten once.
+    """
+
+    script: str
+    old: str
+    new: str
+
+
+@dataclass(frozen=True)
+class Plan:
+    pending: list[PendingScript]
+    checksum_upgrades: list[ChecksumUpgrade]
+
+
 def plan(
     scripts: list[Script],
     applied: list[AppliedScript],
     renderer: Renderer,
     variables: dict,
     out_of_order: bool = False,
-) -> list[PendingScript]:
+) -> Plan:
     applied_by_name = {row.script: row for row in applied}
     applied_versions = [
         parse_version(row.version) for row in applied if row.script_type == "V" and row.version
@@ -42,14 +63,17 @@ def plan(
     max_applied = max(applied_versions, default=())
 
     pending: list[PendingScript] = []
+    upgrades: list[ChecksumUpgrade] = []
     for script in scripts:
         content = renderer.render(script.relative_path, variables)
-        digest = checksum(content)
         previous = applied_by_name.get(script.name)
 
         if script.script_type is ScriptType.VERSIONED:
+            digest = checksum(renderer.source(script.relative_path))
             if previous:
-                if previous.checksum != digest:
+                if previous.checksum == checksum(content) != digest:
+                    upgrades.append(ChecksumUpgrade(script.name, previous.checksum, digest))
+                elif previous.checksum != digest:
                     raise MigrationError(
                         f"{script.name} was already applied and has been modified. "
                         "Versioned scripts are immutable: add a new version instead."
@@ -61,14 +85,17 @@ def plan(
                     f"{'.'.join(map(str, max_applied))}. Use --out-of-order to apply it."
                 )
             pending.append(PendingScript(script, content, digest, "new version"))
-        elif script.script_type is ScriptType.REPEATABLE:
+            continue
+
+        digest = checksum(content)
+        if script.script_type is ScriptType.REPEATABLE:
             if previous is None:
                 pending.append(PendingScript(script, content, digest, "new repeatable"))
             elif previous.checksum != digest:
                 pending.append(PendingScript(script, content, digest, "content changed"))
         else:
             pending.append(PendingScript(script, content, digest, "always"))
-    return pending
+    return Plan(pending, upgrades)
 
 
 def deploy(
@@ -91,7 +118,14 @@ def deploy(
 
     renderer = Renderer.from_config(config)
     variables = {"project": config.project, "location": config.location, **config.vars}
-    pending = plan(discover(config.root_folder), applied, renderer, variables, out_of_order)
+    result = plan(discover(config.root_folder), applied, renderer, variables, out_of_order)
+    pending = result.pending
+    for upgrade in result.checksum_upgrades:
+        if dry_run:
+            logger.info("PLAN  %s - legacy checksum will be upgraded", upgrade.script)
+        else:
+            history.update_checksum(upgrade.script, upgrade.old, upgrade.new)
+            logger.info("UPGRADE checksum of %s", upgrade.script)
 
     environment = str(config.vars.get("env", config.change_history_dataset))
     title = "bqchange plan (dry run)" if dry_run else "bqchange deploy"

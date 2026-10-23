@@ -30,6 +30,12 @@ class Renderer:
     def from_config(cls, config: Config) -> Renderer:
         return cls(config.root_folder, config.modules_folder)
 
+    def source(self, relative_path: str) -> str:
+        """Raw template text: identical in every environment."""
+        loader = self._environment.loader
+        text, _, _ = loader.get_source(self._environment, relative_path)
+        return text.strip()
+
     def render(self, relative_path: str, variables: dict[str, Any]) -> str:
         content = self._environment.get_template(relative_path).render(**variables).strip()
         if not content:

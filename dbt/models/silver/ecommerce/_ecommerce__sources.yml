@@ -60,6 +60,13 @@ sources:
           - name: marketing_opt_in
             data_type: bool
             description: Added in migration V1.2.0.
+          - name: loyalty_tier
+            data_type: string
+            description: Loyalty program tier (bronze | silver | gold). Added in migration V1.4.0.
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [bronze, silver, gold]
           - &source_file
             name: _source_file
             data_type: string

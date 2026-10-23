@@ -15,12 +15,19 @@ maximum-bytes-billed: 1073741824
 labels:
   environment: "{{ env_var('BQ_ENV') }}"
   application: ecommerce
-# Datasets whose column-level changes are recorded by `bqchange record-schema`
-# in <env>_meta.schema_change_log (BRONZE by migrations, SILVER/GOLD by dbt).
-schema-log-datasets:
-  - "{{ env_var('BQ_ENV') }}_bronze"
-  - "{{ env_var('BQ_ENV') }}_silver"
-  - "{{ env_var('BQ_ENV') }}_gold"
+# Logical layers of the data platform and the dataset that implements each one
+# in this environment. Any layout works (medallion, staging/marts, Data Vault...):
+# rename or add layers here, and in `layers` of dbt/dbt_project.yml.
+layers:
+  bronze: "{{ env_var('BQ_ENV') }}_bronze"
+  silver: "{{ env_var('BQ_ENV') }}_silver"
+  gold: "{{ env_var('BQ_ENV') }}_gold"
+  audit: "{{ env_var('BQ_ENV') }}_audit"
+# Layers whose column-level changes `bqchange record-schema` logs.
+schema-log-layers: [bronze, silver, gold]
+# Layers copied from DEV into pull request environments (plus the meta dataset):
+# tables created by migrations and audit history. dbt-built layers are rebuilt.
+pr-clone-layers: [bronze, audit]
 vars:
   env: "{{ env_var('BQ_ENV') }}"
   # Optional IAM principal granted read access to GOLD, e.g. group:analysts@example.com

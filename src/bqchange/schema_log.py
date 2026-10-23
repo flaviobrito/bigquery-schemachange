@@ -94,8 +94,8 @@ def diff(
     return changes
 
 
-def layer_of(dataset: str) -> str:
-    """dev_bronze, prod_bronze and pr_7_bronze are all the BRONZE layer."""
+def legacy_layer_of(dataset: str) -> str:
+    """Layer of a dataset name in states written before explicit layer maps."""
     return dataset.rsplit("_", 1)[-1]
 
 
@@ -117,12 +117,13 @@ def run_context() -> dict[str, str | None]:
 
 
 class SchemaLog:
-    def __init__(self, executor: Executor, project: str, meta_dataset: str, datasets: list[str]):
+    def __init__(self, executor: Executor, project: str, meta_dataset: str, layers: dict[str, str]):
+        """layers maps each logical layer to its dataset, e.g. {"bronze": "dev_bronze"}."""
         self._executor = executor
         self._project = project
         self._meta = f"{project}.{meta_dataset}"
-        self._datasets = datasets
-        self._dataset_of_layer = {layer_of(d): d for d in datasets}
+        self._layers = layers
+        self._layer_of_dataset = {dataset: layer for layer, dataset in layers.items()}
 
     @property
     def log_table(self) -> str:
@@ -160,7 +161,7 @@ class SchemaLog:
     def capture(self) -> list[ColumnState]:
         """Columns of every monitored dataset that exists (a fresh environment has none)."""
         columns: list[ColumnState] = []
-        for dataset in self._datasets:
+        for layer, dataset in self._layers.items():
             try:
                 rows = self._executor.query(
                     f"""
@@ -173,7 +174,7 @@ class SchemaLog:
                 if "Not found" not in str(error):
                     raise
                 continue
-            columns += [ColumnState(layer=layer_of(dataset), **row) for row in rows]
+            columns += [ColumnState(layer=layer, **row) for row in rows]
         return columns
 
     def previous(self) -> list[ColumnState] | None:
@@ -184,7 +185,9 @@ class SchemaLog:
         # States written before layers were introduced store the dataset name.
         return [
             ColumnState(
-                layer=row.get("layer") or layer_of(row["dataset"]),
+                layer=row.get("layer")
+                or self._layer_of_dataset.get(row["dataset"])
+                or legacy_layer_of(row["dataset"]),
                 table_name=row["table_name"],
                 column_name=row["column_name"],
                 data_type=row["data_type"],
@@ -215,7 +218,7 @@ class SchemaLog:
                     {
                         "change_type": c.change_type.value,
                         "layer": c.layer,
-                        "dataset": self._dataset_of_layer.get(c.layer, c.layer),
+                        "dataset": self._layers.get(c.layer, c.layer),
                         "table_name": c.table_name,
                         "column_name": c.column_name,
                         "old_data_type": c.old_data_type,

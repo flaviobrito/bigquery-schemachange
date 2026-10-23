@@ -50,7 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
 
     if args.command == "render":
-        variables = {"project": config.project, "location": config.location, **config.vars}
+        variables = {
+            "project": config.project,
+            "location": config.location,
+            "layers": config.layers,
+            **config.vars,
+        }
         print(Renderer.from_config(config).render(args.script, variables))
         return 0
 
@@ -60,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         log = SchemaLog(
             BigQueryExecutor(config),
             config.project,
-            config.change_history_dataset.split(".", 1)[1],
+            config.meta_dataset,
             config.schema_log_datasets,
         )
         changes = log.record(args.source, args.ignore_missing_tables)

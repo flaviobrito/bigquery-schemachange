@@ -26,7 +26,7 @@ def test_migrations_section_lists_versions():
 
 
 def test_drift_section_reports_alignment_and_problems():
-    assert "✅" in drift_section([])
+    assert "✅ Every monitored layer" in drift_section([])
     section = drift_section(
         [
             {

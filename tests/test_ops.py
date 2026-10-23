@@ -14,8 +14,24 @@ def test_message_lists_every_drifted_column(monkeypatch):
     message = build_message(
         "prod",
         [
-            Drift("bronze", "customers", "loyalty_tier", "undeclared_in_dbt", "STRING", None),
-            Drift("gold", "dim_customers", "manual_note", "undeclared_in_dbt", "STRING", None),
+            Drift(
+                "bronze",
+                "customers",
+                "loyalty_tier",
+                "undeclared_in_dbt",
+                "STRING",
+                None,
+                "dbt sources",
+            ),
+            Drift(
+                "gold",
+                "dim_customers",
+                "manual_note",
+                "undeclared_in_dbt",
+                "STRING",
+                None,
+                "dbt model contracts",
+            ),
             Drift(
                 "silver", "stg_ecommerce__orders", "amount", "type_mismatch", "STRING", "NUMERIC"
             ),

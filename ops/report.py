@@ -124,7 +124,7 @@ def drift_section(rows: list[dict] | None) -> str:
     if rows is None:
         return f"#### Schema drift\n\n{UNAVAILABLE}"
     if not rows:
-        return "#### Schema drift\n\n✅ BRONZE, SILVER and GOLD match the dbt declarations."
+        return "#### Schema drift\n\n✅ Every monitored layer matches the dbt declarations."
     table = markdown_table(
         ["Layer", "Table", "Column", "Status", "BigQuery type", "Declared type"],
         (

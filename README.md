@@ -67,6 +67,10 @@ flowchart LR
 Environments (`dev`, `prod`, `pr_<number>`) share one GCP project and are
 isolated by dataset prefix, set with the `BQ_ENV` variable.
 
+The medallion layers are not hard-coded: they are declared once in `layers`
+(`migrations/bqchange.yml` and `dbt/dbt_project.yml`), so the same tooling works
+for staging/marts, Kimball or Data Vault layouts. See the [guide](docs/guide.md#part-4-any-layout-not-only-medallion).
+
 ## Repository layout
 
 ```

@@ -178,8 +178,9 @@ def deploy(
         history.ensure(config.change_history_dataset)
         if config.schema_log_datasets:
             # Repeatable scripts may build views over the schema change log.
-            meta_dataset = config.change_history_dataset.split(".", 1)[1]
-            SchemaLog(executor, config.project, meta_dataset, config.schema_log_datasets).ensure()
+            SchemaLog(
+                executor, config.project, config.meta_dataset, config.schema_log_datasets
+            ).ensure()
 
     try:
         applied = history.applied()
@@ -190,7 +191,12 @@ def deploy(
         applied = []
 
     renderer = Renderer.from_config(config)
-    variables = {"project": config.project, "location": config.location, **config.vars}
+    variables = {
+        "project": config.project,
+        "location": config.location,
+        "layers": config.layers,
+        **config.vars,
+    }
     result = plan(discover(config.root_folder), applied, renderer, variables, out_of_order)
     pending = result.pending
     for upgrade in result.checksum_upgrades:

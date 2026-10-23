@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 from google.cloud import bigquery
 
-LAYERS = ("bronze", "silver", "gold", "audit", "meta")
+from bqchange.config import Config, load_config
+
+CONFIG_PATH = Path("migrations/bqchange.yml")
 _ENVIRONMENT_PATTERN = re.compile(r"^(dev|prod|pr_\d+)$")
 
 
@@ -37,7 +40,25 @@ def client() -> bigquery.Client:
     )
 
 
+def environment_config(environment: str) -> Config:
+    """bqchange configuration resolved for another environment (e.g. pr_42)."""
+    return load_config(
+        CONFIG_PATH,
+        environ={
+            "BQ_ENV": validate_environment(environment),
+            "GCP_PROJECT_ID": os.environ.get("GCP_PROJECT_ID", "unset"),
+        },
+    )
+
+
+def environment_datasets(environment: str) -> dict[str, str]:
+    """Every dataset of an environment, by layer: the layers map plus bqchange's meta."""
+    config = environment_config(environment)
+    return {**config.layers, "meta": config.meta_dataset}
+
+
 def dataset_id(project: str, environment: str, layer: str) -> str:
-    if layer not in LAYERS:
-        raise ValueError(f"Unknown layer {layer!r}")
-    return f"{project}.{validate_environment(environment)}_{layer}"
+    datasets = environment_datasets(environment)
+    if layer not in datasets:
+        raise ValueError(f"Unknown layer {layer!r}: declared layers are {sorted(datasets)}")
+    return f"{project}.{datasets[layer]}"

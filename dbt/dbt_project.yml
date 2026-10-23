@@ -17,6 +17,18 @@ flags:
   send_anonymous_usage_stats: false
 
 vars:
+  # Logical layer -> dataset name without the environment prefix (BQ_ENV).
+  # Keep in sync with `layers` in migrations/bqchange.yml. Any layout works:
+  # rename or add layers here and use them in `+schema` below.
+  layers:
+    bronze: bronze
+    silver: silver
+    gold: gold
+    audit: audit
+  # Layers watched by the schema drift audit.
+  monitored_layers: [bronze, silver, gold]
+  # Layers whose tables are created by migrations (declared as dbt sources).
+  source_layers: [bronze]
   # Order statuses that count as revenue in GOLD.
   revenue_order_statuses: ["paid", "shipped", "delivered"]
 

@@ -1,5 +1,5 @@
--- Compares the physical schema of BRONZE, SILVER and GOLD with what the dbt
--- project declares: sources for BRONZE, model contracts for SILVER and GOLD.
+-- Compares the physical schema of every monitored layer with what the dbt
+-- project declares: sources for source layers, model contracts for the others.
 -- Any status other than 'aligned' is drift: a migration without a matching
 -- source declaration, a manual ALTER in BigQuery, or a stale YAML entry.
 {{ config(materialized='view') }}
@@ -7,24 +7,26 @@
 with physical as (
 
     select
+        layer,
         table_schema,
         table_name,
         column_name,
         -- Parameterized types such as NUMERIC(18, 2) are compared by base type.
         split(data_type, '(')[offset(0)] as physical_data_type
-    from ({{ physical_columns(monitored_datasets()) }})
+    from ({{ physical_columns(monitored_layers()) }})
 
 ),
 
 declared as (
 
-    {{ declared_columns(monitored_datasets()) }}
+    {{ declared_columns(monitored_layers()) }}
 
 ),
 
 declared_normalized as (
 
     select
+        layer,
         table_schema,
         table_name,
         column_name,
@@ -43,6 +45,7 @@ declared_normalized as (
 compared as (
 
     select
+        coalesce(physical.layer, declared_normalized.layer) as layer,
         coalesce(lower(physical.table_schema), declared_normalized.table_schema) as table_schema,
         coalesce(lower(physical.table_name), declared_normalized.table_name) as table_name,
         coalesce(lower(physical.column_name), declared_normalized.column_name) as column_name,
@@ -74,20 +77,25 @@ built_relations as (
 )
 
 select
-    regexp_extract(compared.table_schema, r'_([a-z]+)$') as layer,
+    compared.layer,
     compared.table_schema,
     compared.table_name,
     compared.column_name,
     compared.physical_data_type,
     compared.declared_data_type,
     compared.drift_status,
+    case
+        when compared.layer in ({{ "'" ~ var('source_layers') | join("', '") ~ "'" }})
+            then 'dbt sources'
+        else 'dbt model contracts'
+    end as declared_in,
     current_timestamp() as checked_at
 from compared
 left join built_relations
     on compared.table_schema = built_relations.table_schema
         and compared.table_name = built_relations.table_name
--- A SILVER/GOLD model not built yet in this environment is not drift;
--- a missing BRONZE table always is (BRONZE must exist before dbt runs).
+-- A dbt model not built yet in this environment is not drift; a missing source
+-- table always is (source layers must exist before dbt runs).
 where
     built_relations.table_name is not null
-    or regexp_extract(compared.table_schema, r'_([a-z]+)$') = 'bronze'
+    or compared.layer in ({{ "'" ~ var('source_layers') | join("', '") ~ "'" }})

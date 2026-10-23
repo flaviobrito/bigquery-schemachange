@@ -19,9 +19,12 @@ reads environment variables. It never contains credentials.
 | `maximum-bytes-billed`        | Per-job billing cap; a job above it fails instead of running        |
 | `labels`                      | Labels added to every job (cost attribution)                       |
 | `vars`                        | Variables available in every script                                 |
-| `schema-log-datasets`         | Datasets whose column-level changes `record-schema` logs (all medallion layers) |
+| `layers`                      | Logical layer → dataset of this environment, e.g. `bronze: "{{ env_var('BQ_ENV') }}_bronze"`. Any names work |
+| `schema-log-layers`           | Layers whose column-level changes `record-schema` logs |
+| `pr-clone-layers`             | Layers copied from DEV into pull request environments (plus the meta dataset) |
 
-`project` and `location` are always available to scripts as variables.
+`project`, `location` and `layers` (the map above) are always available to scripts
+as variables, e.g. `{{ layers.bronze }}`.
 
 ## Script types
 
@@ -67,7 +70,7 @@ planned or applied scripts to the GitHub Actions job summary.
 Migrations only describe BRONZE. SILVER and GOLD are rebuilt by dbt, so there
 is no script to record. `bqchange record-schema` closes that gap:
 
-1. It reads `INFORMATION_SCHEMA.COLUMNS` of every dataset in `schema-log-datasets`.
+1. It reads `INFORMATION_SCHEMA.COLUMNS` of the dataset of every layer in `schema-log-layers`.
 2. It compares the result with the previous snapshot (`<env>_meta.schema_state`),
    **by layer**, so a pull request clone compares correctly with the DEV state it inherited.
 3. Every added, removed or retyped column becomes one row in

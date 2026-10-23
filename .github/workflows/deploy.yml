@@ -51,6 +51,9 @@ jobs:
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
+      - name: bqchange verify
+        run: uv run bqchange verify
+
       # Attributes schema changes to the pull request that introduced this commit.
       - name: Find the pull request of this commit
         env:
@@ -116,6 +119,9 @@ jobs:
         with:
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: bqchange verify
+        run: uv run bqchange verify
 
       # Attributes schema changes to the pull request that introduced this commit.
       - name: Find the pull request of this commit

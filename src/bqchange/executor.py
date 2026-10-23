@@ -69,6 +69,36 @@ class BigQueryExecutor:
         dataset.labels = {"managed_by": "bqchange", **self._config.labels}
         self._client.create_dataset(dataset, exists_ok=True)
 
+    def principal(self) -> str:
+        """Identity used by Application Default Credentials (never a person's email)."""
+        import google.auth
+
+        credentials, _ = google.auth.default()
+        email = getattr(credentials, "service_account_email", None)
+        if email and email != "default":
+            return f"service account {email}"
+        return "user credentials (gcloud auth application-default login)"
+
+    def can_run_jobs(self) -> tuple[bool, str]:
+        result = self.dry_run("select 1")
+        return result.ok, f"dry-run job in {self._config.project}" if result.ok else (
+            result.error or ""
+        )
+
+    def dataset_exists(self, dataset_id: str) -> bool:
+        try:
+            self._client.get_dataset(dataset_id)
+        except NotFound:
+            return False
+        return True
+
+    def table_exists(self, table_id: str) -> bool:
+        try:
+            self._client.get_table(table_id)
+        except NotFound:
+            return False
+        return True
+
 
 def _bq_type(value: Any) -> str:
     if isinstance(value, bool):

@@ -120,6 +120,7 @@ not build:
 | Datasets (`dev_bronze`, `prod_gold`, …) | ✅ Yes | They must exist before anything else |
 | **Landing / source tables** (BRONZE) | ✅ Yes | They hold data loaded from outside; they cannot be dropped and rebuilt, so their structure changes with careful `ALTER TABLE`s |
 | Functions (UDFs), shared views, grants, labels | ✅ Yes (repeatable/always scripts) | Infrastructure that dbt models use but do not own |
+| Operations with no SQL (change clustering, copy a table, load a file) | ✅ Yes, as a CLI script (`V1.5.0__recluster.cli.yml` with `bq`/`gcloud` steps) | Same ordering and history as SQL scripts |
 | **dbt models** (SILVER, GOLD: `stg_*`, `dim_*`, `fct_*`) | ❌ **No** | dbt creates one table per `.sql` file in `dbt/models/`, named after the file, and rebuilds it on every run. Changing a model = editing its `.sql` and contract |
 
 So your dbt project stays exactly where it is (`dbt/models/...`). The
@@ -365,6 +366,7 @@ make install                                  # uv sync, dbt deps, pre-commit ho
 cp .env.example .env                          # set GCP_PROJECT_ID and BQ_ENV
 gcloud auth application-default login         # local credentials, stored outside the repo
 make lint test-python                         # everything that runs offline
+uv run bqchange verify                        # configuration, credentials, permissions
 make migrate-plan migrate sample-data build   # plan, migrate, load and build
 make drift docs                               # drift report and dbt docs on localhost
 ```

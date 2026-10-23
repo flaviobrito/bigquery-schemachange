@@ -324,7 +324,7 @@ flowchart LR
     MERGE[Merge to main] --> DEV[DEV: migrate · build · report]
     DEV --> GATE{{production<br/>approval}}
     GATE --> PROD[PROD: plan · migrate · build · docs · report]
-    MANUAL[Manual trigger] --> MON[PROD monitor: freshness · drift alert · tests]
+    MANUAL[Manual trigger] --> MON[Monitor DEV or PROD: freshness · drift alert · tests]
     CLOSE[PR closed] --> DROP[Drop pr_n_* datasets]
 ```
 
@@ -336,10 +336,13 @@ flowchart LR
 | `pr-cleanup.yml` | pull request closed     | Drops the pull request datasets                                      |
 | `dq-gate-demo.yml` | manual               | Loads deliberately broken data into a throwaway environment; the quality gate is expected to fail |
 
-Each run writes a **job summary** with the migrations planned and applied, the
-newest BRONZE columns, schema drift and dbt results, so schema changes are
-visible directly on the run page. The monitor is manual for this showcase; add a
-`schedule` trigger for daily production monitoring.
+Schema changes are **commented on the pull request**: the CI comment lists what
+the pull request will change, and each deployment comments what was applied to
+DEV and PROD, so reviewers never need to open the Actions tab. Each run also
+writes a **job summary** with the scripts planned and applied (reason and diff),
+the schema change history, schema drift and dbt results. Every job starts with
+`bqchange verify`. The monitor is manual for this showcase; add a `schedule`
+trigger for daily production monitoring.
 
 ## Quality gate in action
 

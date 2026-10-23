@@ -29,6 +29,15 @@ unrelated to this project. In shared projects, add IAM conditions such as
 `resource.name.startsWith("projects/<project>/datasets/dev_")` (one binding per
 prefix: `dev_`, `prod_`, `pr_`) or use a dedicated project.
 
+### Check the setup
+
+```bash
+GCP_PROJECT_ID=<project> BQ_ENV=dev uv run bqchange verify
+```
+
+All checks ✅ (⚠️ only for datasets not created yet) means credentials, job
+permission and configuration are right. CI and deployments run the same command first.
+
 ## 2. First deployment
 
 Run **Actions → Deploy → Run workflow** with *Load sample data* checked, approve

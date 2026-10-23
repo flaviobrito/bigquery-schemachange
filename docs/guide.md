@@ -95,9 +95,12 @@ for this on Snowflake. It does not support BigQuery, so this project includes
 | Versioned   | `V1.2.0__description.sql` | once, in version order       | add a column                     |
 | Repeatable  | `R__description.sql`     | whenever its content changes | (re)create a view or function    |
 | Always      | `A__description.sql`     | on every deployment          | re-apply labels and permissions  |
+| CLI         | same prefixes, `.cli.yml` | same rules as above          | `bq`/`gcloud` steps for operations with no SQL (e.g. change clustering) |
 
 Two safety rules: an applied versioned script **may never be edited** (you add a
-new one instead), and versions **may not be skipped**.
+new one instead), and versions **may not be skipped**. Variables whose name
+contains `secret` are masked as `****` in every output. Full reference:
+[bqchange.md](bqchange.md).
 
 ### dbt
 
@@ -298,7 +301,17 @@ gcloud auth application-default login
 ```
 
 **Expected outcome:** `make install` ends without errors; `make lint test-python`
-prints `All checks passed!` and `46 passed`.
+prints `All checks passed!` and every unit test as passed.
+
+Then check configuration, credentials and permissions in one command:
+
+```bash
+uv run bqchange verify
+```
+
+**Expected outcome:** a list of checks with ✅ (or ⚠️ for datasets a migration
+has not created yet). A ❌ stops you early with the reason, for example missing
+permissions. Secret values are shown as `****`.
 
 > Your local credentials are stored by `gcloud` in `~/.config/gcloud`, outside
 > the repository. `.env` is ignored by Git. Nothing secret is ever committed.
@@ -372,8 +385,9 @@ flowchart LR
 | --- | --- |
 | **Trigger** | A pull request to `main` is opened or receives a new commit |
 | **Input** | The files changed in the pull request; DEV's tables (cloned) and DEV's last dbt manifest |
-| **Static checks** | Python lint + 52 unit tests, SQL lint, `dbt parse`, every migration rendered |
+| **Static checks** | Python lint and unit tests, SQL lint, `dbt parse`, every migration rendered |
 | **Integration** | Only the pull request's new migrations are applied to `pr_<n>`; dbt builds what changed (unchanged models are read from DEV) |
+| **Integration** (continued) | `bqchange verify` checks the pull request datasets; after dbt, the schema changes this pull request causes are **commented in the pull request conversation** |
 | **Expected outcome** | ✅ green when everything passes; ❌ red with the reason in the report otherwise |
 | **Clean-up** | `pr-cleanup.yml` drops the `pr_<n>` datasets when the pull request is closed |
 
@@ -397,7 +411,7 @@ sequenceDiagram
 | **Trigger** | Push to `main` (merge), or **Actions → Deploy → Run workflow** |
 | **Options** | *Load sample data* (generate and load synthetic data), *Full refresh* (rebuild incremental models) |
 | **Input** | `migrations/`, `dbt/`, the `dev` and `prod` datasets |
-| **Expected outcome** | DEV updates automatically; PROD waits for the owner's approval, then updates; the dbt documentation is attached to the run as an artifact |
+| **Expected outcome** | DEV updates automatically; PROD waits for the owner's approval, then updates; the dbt documentation is attached to the run as an artifact. Each environment comments "Deployed to DEV/PROD" with the applied schema changes on the pull request that introduced the commit |
 
 The first production deployment applied every migration to an empty
 environment ([run](https://github.com/flaviobrito/bigquery-schemachange/actions/runs/39883046028)):
@@ -605,7 +619,7 @@ flowchart LR
 | --- | --- |
 | **You do** | Push a branch and open a PR to `main` (button *Compare & pull request* on GitHub, or `gh pr create`) |
 | **What happens** | `ci.yml` starts: static checks, then the integration job in `pr_<n>` datasets |
-| **Where to look** | The PR's *Conversation* tab: every commit shows ✅ or ❌, and the *Checks* tab lists each job |
+| **Where to look** | The PR's *Conversation* tab: every commit shows ✅ or ❌, and a **bot comment lists the schema changes** this PR causes (updated on every push). The *Checks* tab lists each job |
 
 ![Timeline of PR #1: first commit blocked by schema drift, later commit green](images/pr1-timeline.png)
 
@@ -813,9 +827,15 @@ flowchart TD
 
 ## 9. Reading the run reports
 
-Every integration, deploy and monitor run ends with a **Schema and data quality
-report**, written to the run's *Summary* page (visible to signed-in GitHub users;
-the same text is printed in the step log). It has four parts:
+You do not need to open GitHub Actions to see schema changes: they are posted
+as a **comment in the pull request** (CI: what the PR will change; deployments:
+what was applied to DEV and PROD).
+
+![Automatic comment in a pull request listing partitioning and clustering changes](images/evidence-code-partition-clustering-pr-comment.jpg)
+
+For the full detail, every integration, deploy and monitor run ends with a
+**Schema and data quality report**, written to the run's *Summary* page (visible
+to signed-in GitHub users; the same text is printed in the step log). It has four parts:
 
 | Section | Answers | Source |
 | ------- | ------- | ------ |

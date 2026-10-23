@@ -129,6 +129,8 @@ Checks run in layers. See [docs/data-quality.md](docs/data-quality.md) for the f
 7. **Schema history for every layer**: `bqchange record-schema` logs each added,
    removed or retyped column of BRONZE, SILVER and GOLD with its source
    (migration, dbt or manual), commit and pull request (`<env>_audit.schema_history`).
+8. **Versioned GOLD models** for breaking changes: `dim_customers` v1 (deprecated,
+   still at `dim_customers`) and v2 (`dim_customers_v2`, without the raw email).
 
 Failing rows of every test are stored in `<env>_audit`.
 

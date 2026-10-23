@@ -23,6 +23,7 @@ concurrency:
 permissions:
   contents: read
   id-token: write
+  pull-requests: read
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -49,6 +50,15 @@ jobs:
         with:
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # Attributes schema changes to the pull request that introduced this commit.
+      - name: Find the pull request of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          echo "PR_NUMBER=$pr" >> "$GITHUB_ENV"
+          echo "Commit $GITHUB_SHA comes from pull request: ${pr:-none}"
 
       # Anything that changed since the last recorded snapshot happened outside the pipeline.
       - name: Record out-of-band schema changes
@@ -100,6 +110,15 @@ jobs:
         with:
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # Attributes schema changes to the pull request that introduced this commit.
+      - name: Find the pull request of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          echo "PR_NUMBER=$pr" >> "$GITHUB_ENV"
+          echo "Commit $GITHUB_SHA comes from pull request: ${pr:-none}"
 
       # Anything that changed since the last recorded snapshot happened outside the pipeline.
       - name: Record out-of-band schema changes

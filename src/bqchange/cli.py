@@ -39,6 +39,11 @@ def main(argv: list[str] | None = None) -> int:
         "record-schema", help="Log column-level schema changes since the last snapshot"
     )
     record_parser.add_argument("--source", required=True, choices=SOURCES)
+    record_parser.add_argument(
+        "--ignore-missing-tables",
+        action="store_true",
+        help="Do not report tables absent from this environment as removed (pull request CI)",
+    )
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), format="%(levelname)-7s %(message)s")
@@ -58,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
             config.change_history_dataset.split(".", 1)[1],
             config.schema_log_datasets,
         )
-        changes = log.record(args.source)
+        changes = log.record(args.source, args.ignore_missing_tables)
         logging.info("Recorded %s schema change(s) from %s", len(changes), args.source)
         write_summary(render_schema_changes(args.source, config.vars.get("env", ""), changes))
         return 0

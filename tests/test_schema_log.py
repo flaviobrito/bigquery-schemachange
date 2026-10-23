@@ -135,3 +135,18 @@ def test_legacy_state_with_dataset_names_is_still_understood():
 
     log = SchemaLog(Legacy(BASE, BASE), "p", "dev_meta", ["dev_bronze", "dev_gold"])
     assert log.record("dbt") == []
+
+
+def test_pull_request_mode_ignores_tables_that_were_not_built():
+    current = [ColumnState("bronze", "customers", "customer_id", "STRING")]
+    assert diff(BASE, current, ignore_missing_tables=True) == []
+    assert {c.change_type for c in diff(BASE, current)} == {ChangeType.REMOVED}
+
+
+def test_pull_request_mode_still_reports_changes_in_built_tables():
+    current = [
+        ColumnState("bronze", "customers", "customer_id", "STRING"),
+        ColumnState("gold", "dim_customers", "lifetime_revenue", "NUMERIC"),
+    ]
+    changes = diff(BASE, current, ignore_missing_tables=True)
+    assert [(c.change_type, c.column_name) for c in changes] == [(ChangeType.REMOVED, "email")]

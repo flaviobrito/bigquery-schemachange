@@ -54,8 +54,17 @@ class SchemaChange:
     new_data_type: str | None
 
 
-def diff(previous: list[ColumnState] | None, current: list[ColumnState]) -> list[SchemaChange]:
-    """Column-level changes between two snapshots. No previous snapshot = baseline."""
+def diff(
+    previous: list[ColumnState] | None,
+    current: list[ColumnState],
+    ignore_missing_tables: bool = False,
+) -> list[SchemaChange]:
+    """Column-level changes between two snapshots. No previous snapshot = baseline.
+
+    With ignore_missing_tables, tables absent from the current snapshot are not
+    reported as removed: in a pull request environment only modified models are
+    built, the others are read from DEV.
+    """
     if previous is None:
         return [
             SchemaChange(
@@ -63,6 +72,9 @@ def diff(previous: list[ColumnState] | None, current: list[ColumnState]) -> list
             )
             for c in sorted(current)
         ]
+    if ignore_missing_tables:
+        present = {(c.layer, c.table_name) for c in current}
+        previous = [c for c in previous if (c.layer, c.table_name) in present]
     before = {c.key: c for c in previous}
     after = {c.key: c for c in current}
     changes = []
@@ -180,13 +192,13 @@ class SchemaLog:
             for row in rows
         ]
 
-    def record(self, source: str) -> list[SchemaChange]:
+    def record(self, source: str, ignore_missing_tables: bool = False) -> list[SchemaChange]:
         """Snapshot the monitored datasets, log the differences, store the new state."""
         if source not in SOURCES:
             raise ValueError(f"Unknown source {source!r}: expected one of {SOURCES}")
         self.ensure()
         current = self.capture()
-        changes = diff(self.previous(), current)
+        changes = diff(self.previous(), current, ignore_missing_tables)
         if changes:
             # One job for all changes: rows travel as a JSON array parameter.
             payload = json.dumps(

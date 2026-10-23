@@ -1,4 +1,6 @@
 -- Daily revenue by sales channel, revenue-recognized orders only.
+-- Partitioned by day: dashboards always filter by date, so queries scan less.
+{{ config(partition_by={'field': 'order_date', 'data_type': 'date'}) }}
 select
     order_date,
     order_channel,
